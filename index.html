@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#04060a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" type="image/png" href="/icon-192.png" />
+  <title>МЕЖДУГОРНЫЙ // GoreBox Android Edition</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <!-- 3D Viewport Canvas Container -->
+  <div id="canvas-container"></div>
+
+  <!-- NPC Floating World Labels -->
+  <div id="npc-labels"></div>
+
+  <!-- Loading Overlay -->
+  <div id="loading-screen">
+    <div class="loading-box">
+      <div class="loading-tag">ПРОЕКТ «МЕЖДУГОРНЫЙ» // GOREBOX ANDROID</div>
+      <h1>ТЕСТОВЫЙ ПОЛИГОН 50×50М</h1>
+      <div class="progress-bar-outer">
+        <div id="loading-progress" class="progress-bar-inner" style="width: 15%"></div>
+      </div>
+      <div id="loading-status" class="loading-status">Загрузка 2K текстур и физики...</div>
+    </div>
+  </div>
+
+  <!-- HUD LAYER -->
+  <div id="hud" class="hud-layer">
+    <!-- Top-Left: Menu/APK + Inventory Button + Vitals Pill -->
+    <div class="hud-top-bar">
+      <button id="q-toggle-menu" class="top-pill-btn menu-btn" type="button">⚙️ Меню / APK</button>
+      <button id="btn-open-inventory" class="top-pill-btn inv-btn" type="button">🎒 Инвентарь</button>
+      <div class="top-vitals-pill">
+        <span>❤️ <strong id="player-hp-val">100</strong></span>
+        <span class="sep">|</span>
+        <span>🛡️ <strong id="player-armor-val">0</strong></span>
+        <span class="sep">|</span>
+        <span>FPS <strong id="hud-fps">60</strong></span>
+      </div>
+    </div>
+
+    <!-- GOREBOX 2D BODY TRAUMA DOLL WIDGET (Top-Left under bar, tap to open Inventory/Medical) -->
+    <div id="body-doll-hud" class="body-doll-hud" title="Нажмите для лечения и осмотра травм">
+      <div class="doll-hud-title" id="doll-hud-owner">КУКЛА ТЕЛА: ИГРОК</div>
+      <svg id="hud-doll-svg" class="doll-svg" viewBox="0 0 100 165">
+        <!-- Head -->
+        <rect id="doll-head" class="doll-part healthy" x="37" y="6" width="26" height="24" rx="3" />
+        <!-- Neck -->
+        <rect class="doll-neck" x="45" y="30" width="10" height="5" />
+        <!-- Upper Torso / Chest -->
+        <polygon id="doll-upperTorso" class="doll-part healthy" points="28,35 72,35 68,68 32,68" />
+        <!-- Abdomen / Pelvis -->
+        <polygon id="doll-abdomen" class="doll-part healthy" points="32,70 68,70 64,96 36,96" />
+        <!-- Left Arm (Viewer Left) -->
+        <rect id="doll-upperArmL" class="doll-part healthy" x="14" y="36" width="12" height="28" rx="2" />
+        <rect id="doll-forearmL" class="doll-part healthy" x="14" y="66" width="11" height="26" rx="2" />
+        <!-- Right Arm (Viewer Right) -->
+        <rect id="doll-upperArmR" class="doll-part healthy" x="74" y="36" width="12" height="28" rx="2" />
+        <rect id="doll-forearmR" class="doll-part healthy" x="75" y="66" width="11" height="26" rx="2" />
+        <!-- Left Leg -->
+        <rect id="doll-thighL" class="doll-part healthy" x="35" y="98" width="13" height="30" rx="2" />
+        <rect id="doll-calfL" class="doll-part healthy" x="35" y="130" width="12" height="30" rx="2" />
+        <!-- Right Leg -->
+        <rect id="doll-thighR" class="doll-part healthy" x="52" y="98" width="13" height="30" rx="2" />
+        <rect id="doll-calfR" class="doll-part healthy" x="53" y="130" width="12" height="30" rx="2" />
+      </svg>
+      <div class="doll-hud-status" id="doll-hud-status">Все конечности целы</div>
+    </div>
+
+    <!-- Top-Right: Compact 4-Slot Weapon Bar -->
+    <div class="hotbar-top">
+      <div class="hotbar-slot active" data-slot="1">
+        <span class="slot-icon">✊</span>
+        <span class="slot-name">Руки</span>
+      </div>
+      <div class="hotbar-slot" data-slot="2">
+        <span class="slot-icon">⚡</span>
+        <span class="slot-name">RCV2</span>
+      </div>
+      <div class="hotbar-slot" data-slot="3">
+        <span class="slot-icon">🔧</span>
+        <span class="slot-name">Лом</span>
+      </div>
+      <div class="hotbar-slot" data-slot="4">
+        <span class="slot-icon">🔫</span>
+        <span class="slot-name">ПМ</span>
+      </div>
+    </div>
+
+    <!-- Subtle Toast Notification at Top -->
+    <div id="event-feed" class="hud-top-toast"></div>
+
+    <!-- Center Crosshair & Target Prompt -->
+    <div class="crosshair-wrapper">
+      <div id="crosshair" class="crosshair">
+        <span class="ch-line ch-top"></span>
+        <span class="ch-line ch-bottom"></span>
+        <span class="ch-line ch-left"></span>
+        <span class="ch-line ch-right"></span>
+        <span class="ch-dot"></span>
+      </div>
+      <div id="hitmarker" class="hitmarker hidden">
+        <span></span><span></span><span></span><span></span>
+      </div>
+      <div id="target-prompt" class="target-info hidden">Ящик</div>
+    </div>
+  </div>
+
+  <!-- GOREBOX ANDROID MULTI-TOUCH CONTROLS -->
+  <div id="android-touch-ui" class="android-touch-ui">
+    <!-- Full right-half touch look area -->
+    <div id="touch-look-zone" class="touch-look-zone"></div>
+
+    <!-- Left Virtual Analog Thumbstick -->
+    <div id="touch-joystick-zone" class="touch-joystick-zone">
+      <div id="touch-joystick-base" class="touch-joystick-base">
+        <div id="touch-joystick-knob" class="touch-joystick-knob"></div>
+      </div>
+    </div>
+
+    <!-- Right-Side Action Buttons -->
+    <div class="android-action-cluster">
+      <!-- Freeze / RCV2 Mode button -->
+      <button id="btn-touch-freeze" class="abtn abtn-freeze hidden" type="button" title="Заморозить / Режим RCV2">
+        <span class="abtn-icon">❄️</span>
+      </button>
+
+      <!-- Jump -->
+      <button id="btn-touch-jump" class="abtn abtn-jump" type="button" title="Прыжок">
+        <span class="abtn-icon">⬆️</span>
+      </button>
+
+      <!-- Grab / Throw Object -->
+      <button id="btn-touch-grab" class="abtn abtn-grab" type="button" title="Схватить / Бросить">
+        <span class="abtn-icon">✋</span>
+      </button>
+
+      <!-- Main Attack / Shoot / Launch Button -->
+      <button id="btn-touch-attack" class="abtn abtn-attack" type="button" title="Огонь / Удар">
+        <span class="abtn-icon">🔥</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- GOREBOX INVENTORY & 2D BODY TRAUMA INSPECTOR MODAL -->
+  <div id="inventory-modal" class="spawn-menu hidden">
+    <div class="spawn-modal inv-modal">
+      <div class="spawn-header">
+        <div>
+          <h2>🎒 ИНВЕНТАРЬ И 2D КУКЛА ТРАВМ (GOREBOX)</h2>
+          <p>Экипировка оружия, настройка RCV2, лечение конечностей и рюкзак предметов</p>
+        </div>
+        <button id="close-inventory-modal" class="close-btn" type="button">✕ Закрыть</button>
+      </div>
+
+      <div class="inv-grid">
+        <!-- Left Column: Detailed 2D Body Trauma Doll & Limb Diagnostics -->
+        <div class="inv-doll-panel">
+          <div class="inv-panel-header">
+            <h3 id="inv-doll-title">🩺 Состояние тела: Игрок</h3>
+            <button id="btn-switch-doll-target" class="mini-switch-btn" type="button">🔄 Игрок / НПС</button>
+          </div>
+          <div class="inv-doll-stage">
+            <svg id="inv-doll-svg" class="inv-doll-svg" viewBox="0 0 100 165">
+              <rect id="idoll-head" class="doll-part healthy" x="37" y="6" width="26" height="24" rx="3" />
+              <rect class="doll-neck" x="45" y="30" width="10" height="5" />
+              <polygon id="idoll-upperTorso" class="doll-part healthy" points="28,35 72,35 68,68 32,68" />
+              <polygon id="idoll-abdomen" class="doll-part healthy" points="32,70 68,70 64,96 36,96" />
+              <rect id="idoll-upperArmL" class="doll-part healthy" x="14" y="36" width="12" height="28" rx="2" />
+              <rect id="idoll-forearmL" class="doll-part healthy" x="14" y="66" width="11" height="26" rx="2" />
+              <rect id="idoll-upperArmR" class="doll-part healthy" x="74" y="36" width="12" height="28" rx="2" />
+              <rect id="idoll-forearmR" class="doll-part healthy" x="75" y="66" width="11" height="26" rx="2" />
+              <rect id="idoll-thighL" class="doll-part healthy" x="35" y="98" width="13" height="30" rx="2" />
+              <rect id="idoll-calfL" class="doll-part healthy" x="35" y="130" width="12" height="30" rx="2" />
+              <rect id="idoll-thighR" class="doll-part healthy" x="52" y="98" width="13" height="30" rx="2" />
+              <rect id="idoll-calfR" class="doll-part healthy" x="53" y="130" width="12" height="30" rx="2" />
+            </svg>
+            <div id="inv-limb-breakdown" class="inv-limb-breakdown"></div>
+          </div>
+          <div class="inv-doll-legend">
+            <span class="leg-dot healthy"></span> Цела
+            <span class="leg-dot bruised"></span> Ранена
+            <span class="leg-dot critical"></span> Перелом/Кровь
+            <span class="leg-dot severed"></span> Оторвана
+          </div>
+        </div>
+
+        <!-- Middle Column: Arsenal & Weapon Modes -->
+        <div class="spawn-col">
+          <h3>🔫 Арсенал (Взять в руки)</h3>
+          <button class="inv-equip-btn" data-equip="1" type="button">✊ Руки (Бой / Захват предметов)</button>
+          <button class="inv-equip-btn" data-equip="2" type="button">⚡ RCV2 Reality Crusher (Гравипушка)</button>
+          <button class="inv-equip-btn" data-equip="3" type="button">🔧 Стальной Лом-Гвоздодёр (Острый)</button>
+          <button class="inv-equip-btn" data-equip="4" type="button">🔫 Пистолет ПМ 9×18мм (Новые детали)</button>
+
+          <h3 style="margin-top:10px;">⚙️ Режимы оружия</h3>
+          <button id="btn-rcv2-mode" class="spawn-action-btn" type="button">⚡ Режим RCV2: Грави-Захват</button>
+          <button id="btn-pistol-mode" class="spawn-action-btn" type="button">🔫 Режим ПМ: Полуавтомат / Авто</button>
+          <button id="btn-store-held" class="spawn-action-btn" type="button">📥 Убрать предмет из рук в рюкзак</button>
+        </div>
+
+        <!-- Right Column: Medical & Backpack Items -->
+        <div class="spawn-col">
+          <h3>💉 Медицина и Снаряжение</h3>
+          <button id="inv-use-medkit" class="spawn-action-btn" type="button">💉 Использовать Аптечку (+100 HP и лечение куклы)</button>
+          <button id="inv-use-bandage" class="spawn-action-btn" type="button">🩹 Перевязать раны (Остановить кровь)</button>
+          <button id="inv-use-armor" class="spawn-action-btn" type="button">🛡️ Надеть Бронежилет (+100 Брони)</button>
+          <button id="inv-use-adrenaline" class="spawn-action-btn" type="button">💊 Вколоть Адреналин (Ускорение + Сила)</button>
+
+          <h3 style="margin-top:10px;">🎒 Предметы в рюкзаке (<span id="backpack-count">3</span>)</h3>
+          <div id="backpack-list" class="backpack-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GoreBox Menu + APK Download Modal -->
+  <div id="spawn-menu" class="spawn-menu hidden">
+    <div class="spawn-modal">
+      <div class="spawn-header">
+        <div>
+          <h2>⚙️ МЕНЮ «МЕЖДУГОРНЫЙ // GOREBOX»</h2>
+          <p>Скачивание APK, спавн предметов, НПС и настройки</p>
+        </div>
+        <button id="close-spawn-menu" class="close-btn" type="button">✕ Закрыть</button>
+      </div>
+
+      <div class="apk-banner-in-menu">
+        <a href="/mezhdugorny-gorebox.apk" download="mezhdugorny-gorebox.apk" class="apk-big-download-btn">
+          📥 СКАЧАТЬ APK НА ТЕЛЕФОН (mezhdugorny-gorebox.apk)
+        </a>
+        <div class="apk-mirror-links">
+          <a href="https://github.com/milortgill-create/-3448/raw/arena/a9e82855-3448/public/mezhdugorny-gorebox.apk" target="_blank" rel="noopener">🚀 Прямая ссылка GitHub №1</a>
+          <a href="https://raw.githubusercontent.com/milortgill-create/-3448/arena/a9e82855-3448/public/mezhdugorny-gorebox.apk" target="_blank" rel="noopener">🌐 Прямая ссылка GitHub №2</a>
+        </div>
+      </div>
+
+      <div class="spawn-columns">
+        <div class="spawn-col">
+          <h3>📦 Спавн предметов</h3>
+          <button class="spawn-item-btn" data-spawn="crate_std" type="button">📦 Деревянный ящик</button>
+          <button class="spawn-item-btn" data-spawn="bottle_pack" type="button">🍾 6 стеклянных бутылок</button>
+          <button class="spawn-item-btn" data-spawn="cinderblock" type="button">🧱 Бетонный шлакоблок</button>
+          <button class="spawn-item-btn" data-spawn="barrel_red" type="button">🛢️ Взрывная бочка (Пропан)</button>
+          <button class="spawn-item-btn" data-spawn="barrel_steel" type="button">🛢️ Стальная бочка</button>
+          <button class="spawn-item-btn" data-spawn="worklight" type="button">🔦 Переносной прожектор</button>
+        </div>
+
+        <div class="spawn-col">
+          <h3>🧍 НПС и Регдолл</h3>
+          <button class="spawn-item-btn" data-spawn="npc_survivor" type="button">🧍 +НПС Выживший (Умный ИИ)</button>
+          <button class="spawn-item-btn" data-spawn="npc_hostile" type="button">⚔️ +НПС Мародёр (Враг)</button>
+          <button class="spawn-item-btn" data-spawn="npc_dummy" type="button">🎯 +НПС Манекен</button>
+          <button class="spawn-action-btn" id="act-ragdoll-all" type="button">💥 Уронить всех НПС в Регдолл</button>
+          <button class="spawn-action-btn" id="act-revive-all" type="button">💉 Вылечить и поднять всех НПС</button>
+          <button class="spawn-action-btn" id="btn-cycle-ai" type="button">🧠 Режим ИИ: Умный</button>
+        </div>
+
+        <div class="spawn-col">
+          <h3>⚡ Настройки и Эффекты</h3>
+          <button class="spawn-action-btn" id="q-fullscreen" type="button">⛶ Полный экран</button>
+          <button class="spawn-action-btn" id="act-toggle-slowmo" type="button">⏱ Слоу-Мо (0.25x / 1.0x)</button>
+          <button id="spawn-action-btn" id="q-flashlight" class="spawn-action-btn" type="button">🔦 Вкл/Выкл Фонарь</button>
+          <button class="spawn-action-btn" id="act-toggle-spotlights" type="button">💡 Сменить свет прожекторов</button>
+          <button class="spawn-action-btn" id="act-explosion-center" type="button">💣 Взрыв в центре карты</button>
+          <button class="spawn-action-btn danger" id="act-reset-scene" type="button">🔄 Сбросить карту</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Damage Vignette -->
+  <div id="damage-vignette" class="damage-vignette"></div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

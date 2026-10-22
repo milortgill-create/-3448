@@ -1,0 +1,14 @@
+{
+  "name": "МЕЖДУГОРНЫЙ // GoreBox Android Sandbox",
+  "short_name": "Междугорный",
+  "description": "Тестовый полигон 50x50м: физика регдолла, умный ИИ НПС, 3K PBR текстуры и сенсорное управление в стиле GoreBox.",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#04060a",
+  "theme_color": "#04060a",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
