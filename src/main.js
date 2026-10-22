@@ -15,7 +15,7 @@ class MezhdugornySandboxGame {
     this.nextNpcId = 1;
     this.timeScale = 1.0;
     this.aiGlobalMode = 0;
-    this.dollInspectMode = 'player'; // 'player' | 'npc'
+    this.dollInspectMode = 'npc'; // По умолчанию показывает раны последнего атакованного НПС или игрока
     this.fpsFrames = 0;
     this.fpsLastTime = performance.now();
     this.currentFps = 60;
@@ -68,7 +68,7 @@ class MezhdugornySandboxGame {
     this.world.allowSleep = true;
     this.world.solver.iterations = 10;
     this.world.defaultContactMaterial.friction = 0.48;
-    this.world.defaultContactMaterial.restitution = 0.16;
+    this.world.defaultContactMaterial.restitution = 0.12;
   }
 
   _setLoadingProgress(pct, text) {
@@ -87,7 +87,7 @@ class MezhdugornySandboxGame {
       this.textures.concrete = texGen.createConcrete2K();
 
       setTimeout(() => {
-        this._setLoadingProgress(68, 'Генерация 2K текстур и пула из 40 декалей повреждений...');
+        this._setLoadingProgress(68, 'Генерация 56 видов и рисунков ран GoreBox и красной крови...');
         this.textures.wood = texGen.createWoodCrate2K();
         this.textures.barrelRed = texGen.createMetalBarrel2K('#b91c1c', '#facc15', 'ОГНЕОПАСНО // ПРОПАН');
         this.textures.barrelBlue = texGen.createMetalBarrel2K('#1d4ed8', '#e2e8f0', 'ТЕХ. ВОДА // МЕЖДУГОРНЫЙ');
@@ -95,9 +95,9 @@ class MezhdugornySandboxGame {
         this.textures.gore = texGen.createGoreAndWoundTextures();
 
         setTimeout(() => {
-          this._setLoadingProgress(92, 'Сборка физики Ragdoll НПС, 3D-рук и звуков...');
+          this._setLoadingProgress(92, 'Сборка эталонной 3D модели НПС и физики Ragdoll...');
           this._buildGameSystems();
-          this._setLoadingProgress(100, 'Готово!');
+          this._setLoadingProgress(100, 'Готово');
 
           setTimeout(() => {
             const loader = document.getElementById('loading-screen');
@@ -143,17 +143,14 @@ class MezhdugornySandboxGame {
           dir.normalize();
           const blastVec = dir.clone().multiplyScalar(force * 0.8 * factor);
 
-          if (dist < radius * 0.58) {
+          if (dist < radius * 0.48) {
             const severCandidates = [
               npc.limbs.forearmL,
               npc.limbs.forearmR,
-              npc.limbs.calfL,
-              npc.limbs.upperArmR,
-              npc.limbs.thighL
+              npc.limbs.calfL
             ].filter((l) => l && !l.severed);
-            const count = dist < radius * 0.35 ? 2 : 1;
-            for (let k = 0; k < count && severCandidates.length > 0; k++) {
-              const pick = severCandidates.splice(Math.floor(Math.random() * severCandidates.length), 1)[0];
+            if (severCandidates.length > 0) {
+              const pick = severCandidates[Math.floor(Math.random() * severCandidates.length)];
               npc.severLimb(pick, blastVec);
             }
           }
@@ -163,10 +160,10 @@ class MezhdugornySandboxGame {
             78 * factor,
             nPos,
             blastVec,
-            'bullet',
+            'blast',
             true
           );
-          npc.enterRagdoll(4.2, dir.multiplyScalar(force * 0.5 * factor));
+          npc.enterRagdoll(4.0, dir.multiplyScalar(force * 0.5 * factor));
         } else if (dist < radius * 2.2) {
           npc.onWitnessPlayerViolence(centerPos, false);
         }
@@ -269,10 +266,6 @@ class MezhdugornySandboxGame {
     this._hmTimer = setTimeout(() => hm.classList.add('hidden'), 140);
   }
 
-  /**
-   * Universal touch + pointer + click binder so every button in the game
-   * responds immediately on Android phones and PC browsers!
-   */
   _bindTap(el, callback) {
     if (!el) return;
     let lastTime = 0;
@@ -293,17 +286,15 @@ class MezhdugornySandboxGame {
   }
 
   _bindUIEvents() {
-    // 1. Hotbar Weapon Slots (1: Руки, 2: RCV2, 3: Лом, 4: ПМ)
     document.querySelectorAll('.hotbar-slot').forEach((el) => {
       this._bindTap(el, () => {
         const slot = Number(el.dataset.slot);
         this.player.setSlot(slot);
-        const names = ['', '✊ Руки', '⚡ RCV2 Reality Crusher', '🔧 Стальной Лом', '🔫 Пистолет ПМ 9×18'];
+        const names = ['', 'РУКИ', 'RCV2 REALITY CRUSHER', 'СТАЛЬНОЙ ЛОМ', 'ПИСТОЛЕТ ПМ 9×18'];
         this.showToast(`В руках: ${names[slot]}`);
       });
     });
 
-    // 2. Modals: Inventory Modal & Spawn Menu Modal
     const menuEl = document.getElementById('spawn-menu');
     const invEl = document.getElementById('inventory-modal');
 
@@ -334,7 +325,6 @@ class MezhdugornySandboxGame {
     this._bindTap(document.getElementById('body-doll-hud'), toggleInventory);
     this._bindTap(document.getElementById('close-inventory-modal'), toggleInventory);
 
-    // 3. Inventory Equipment & Medical Buttons
     document.querySelectorAll('.inv-equip-btn').forEach((btn) => {
       this._bindTap(btn, () => {
         const slot = Number(btn.dataset.equip);
@@ -360,10 +350,10 @@ class MezhdugornySandboxGame {
       const btn = document.getElementById('btn-pistol-mode');
       if (btn) {
         btn.textContent = this.player.pistolAuto
-          ? '🔫 Режим ПМ: Автоматический'
-          : '🔫 Режим ПМ: Одиночный';
+          ? 'РЕЖИМ ПМ: АВТОМАТИЧЕСКИЙ'
+          : 'РЕЖИМ ПМ: ОДИНОЧНЫЙ';
       }
-      this.showToast(this.player.pistolAuto ? '🔫 ПМ: Авто-огонь' : '🔫 ПМ: Одиночный огонь');
+      this.showToast(this.player.pistolAuto ? 'ПМ: Авто-огонь' : 'ПМ: Одиночный огонь');
     });
 
     this._bindTap(document.getElementById('btn-pistol-reload'), () => {
@@ -400,7 +390,6 @@ class MezhdugornySandboxGame {
       this._updateInventoryDollInspector();
     });
 
-    // 4. Spawn Menu Buttons
     this._bindTap(document.getElementById('q-fullscreen'), async () => {
       try {
         if (!document.fullscreenElement) {
@@ -408,7 +397,7 @@ class MezhdugornySandboxGame {
           if (screen.orientation && screen.orientation.lock) {
             screen.orientation.lock('landscape').catch(() => {});
           }
-          this.showToast('⛶ Полный экран');
+          this.showToast('Полный экран включён');
         } else {
           await document.exitFullscreen();
         }
@@ -437,7 +426,7 @@ class MezhdugornySandboxGame {
     this._bindTap(btnCycleAi, () => {
       this.aiGlobalMode = (this.aiGlobalMode + 1) % 3;
       const modes = ['Умный', 'Бой', 'Манекен'];
-      if (btnCycleAi) btnCycleAi.textContent = `🧠 Режим ИИ: ${modes[this.aiGlobalMode]}`;
+      if (btnCycleAi) btnCycleAi.textContent = `Режим ИИ: ${modes[this.aiGlobalMode]}`;
       for (const npc of this.npcs) {
         if (npc.dead) continue;
         if (this.aiGlobalMode === 0) {
@@ -471,14 +460,14 @@ class MezhdugornySandboxGame {
           npc.enterRagdoll(3.6, new THREE.Vector3((Math.random() - 0.5) * 4, 3.2, (Math.random() - 0.5) * 4));
         }
       }
-      this.showToast('💥 НПС в регдолле');
+      this.showToast('Все НПС переведены в Ragdoll');
     });
 
     this._bindTap(document.getElementById('act-revive-all'), () => {
       for (const npc of this.npcs) {
         npc.revive();
       }
-      this.showToast('💉 НПС подняты на ноги');
+      this.showToast('Все НПС вылечены и подняты на ноги');
     });
 
     this._bindTap(document.getElementById('act-toggle-slowmo'), () => {
@@ -487,7 +476,7 @@ class MezhdugornySandboxGame {
 
     this._bindTap(document.getElementById('act-toggle-spotlights'), () => {
       const modeName = this.testMap.cycleLightingMode();
-      this.showToast(`💡 ${modeName}`);
+      this.showToast(modeName);
     });
 
     this._bindTap(document.getElementById('act-explosion-center'), () => {
@@ -500,9 +489,6 @@ class MezhdugornySandboxGame {
     });
   }
 
-  /**
-   * Renders the player's Backpack items inside the Inventory modal.
-   */
   _renderBackpackList() {
     const listEl = document.getElementById('backpack-list');
     const countEl = document.getElementById('backpack-count');
@@ -515,7 +501,7 @@ class MezhdugornySandboxGame {
       const empty = document.createElement('div');
       empty.style.fontSize = '10.5px';
       empty.style.color = '#64748b';
-      empty.textContent = 'Рюкзак пуст (возьмите предмет ✋ и нажмите «Убрать в рюкзак»)';
+      empty.textContent = 'Рюкзак пуст (возьмите предмет ХВАТ и нажмите «Убрать в рюкзак»)';
       listEl.appendChild(empty);
       return;
     }
@@ -524,7 +510,7 @@ class MezhdugornySandboxGame {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'backpack-item-btn';
-      btn.textContent = `📤 Достать: ${item.name}`;
+      btn.textContent = `Достать: ${item.name}`;
       this._bindTap(btn, () => {
         this.player.backpack.splice(idx, 1);
         this.spawnFromMenu(item.kind === 'bottle' ? 'bottle_single' : item.kind);
@@ -534,23 +520,16 @@ class MezhdugornySandboxGame {
     });
   }
 
-  /**
-   * Computes the CSS class ('healthy' | 'bruised' | 'bleeding' | 'critical' | 'severed') for a limb on the 2D GoreBox Body Doll.
-   */
   _getLimbTraumaClass(limb) {
     if (!limb) return 'healthy';
     if (limb.severed || limb.hp <= 0) return 'severed';
     const ratio = limb.hp / limb.maxHp;
-    if (ratio < 0.35) return 'critical';
+    if (ratio < 0.35 || limb.arterial) return 'critical';
     if (limb.bleeding || ratio < 0.65) return 'bleeding';
-    if (ratio < 0.95) return 'bruised';
+    if (ratio < 0.95 || (limb.wounds && limb.wounds.length > 0)) return 'bruised';
     return 'healthy';
   }
 
-  /**
-   * Updates the Live 2D GoreBox Body Trauma Doll on the HUD (`#body-doll-hud`).
-   * Automatically shows the targeted NPC's limb injuries when aiming at an NPC, or the Player's own body trauma!
-   */
   _updateBodyDollHUD() {
     const ownerEl = document.getElementById('doll-hud-owner');
     const statusEl = document.getElementById('doll-hud-status');
@@ -559,6 +538,7 @@ class MezhdugornySandboxGame {
     const targetNpc =
       (this.player.hoveredTarget && this.player.hoveredTarget.npc) ||
       (this.player.heldTarget && this.player.heldTarget.npc) ||
+      this.player.lastInspectedNpc ||
       null;
 
     const limbMap = targetNpc ? targetNpc.limbs : this.player.playerLimbs;
@@ -597,36 +577,39 @@ class MezhdugornySandboxGame {
       else if (st === 'bruised') bruisedCount++;
     }
 
+    const totalWounds = targetNpc ? targetNpc.activeWounds.length : this.player.activeWounds.length;
+
     if (targetNpc && targetNpc.dead) {
-      statusEl.textContent = '💤 ОБЕЗДВИЖЕН';
+      statusEl.textContent = `ОБЕЗДВИЖЕН (Ран: ${totalWounds})`;
       statusEl.style.color = '#ef4444';
     } else if (targetNpc && targetNpc.surrendered) {
-      statusEl.textContent = '🙌 СДАЁТСЯ';
+      statusEl.textContent = `СДАЁТСЯ (Ран: ${totalWounds})`;
       statusEl.style.color = '#fbbf24';
     } else if (severedCount > 0) {
-      statusEl.textContent = `⚙️ Отсоединено: ${severedCount}`;
+      statusEl.textContent = `Отсоединено: ${severedCount} | Ран: ${totalWounds}`;
       statusEl.style.color = '#f87171';
     } else if (criticalCount > 0) {
-      statusEl.textContent = `⚠️ Критич. урон (${criticalCount})`;
+      statusEl.textContent = `Артерия / Крит. (Ран: ${totalWounds})`;
       statusEl.style.color = '#ef4444';
     } else if (bleedingCount > 0) {
-      statusEl.textContent = `⚠️ Тяж. повреждение`;
+      statusEl.textContent = `Кровотечение (Ран: ${totalWounds})`;
       statusEl.style.color = '#fb923c';
-    } else if (bruisedCount > 0) {
-      statusEl.textContent = `Ушибы / Повреждения`;
+    } else if (bruisedCount > 0 || totalWounds > 0) {
+      statusEl.textContent = `Ранений: ${totalWounds}`;
       statusEl.style.color = '#facc15';
     } else {
-      statusEl.textContent = `Все конечности целы`;
+      statusEl.textContent = `ВСЕ СЕГМЕНТЫ ЦЕЛЫ`;
       statusEl.style.color = '#4ade80';
     }
   }
 
   /**
-   * Updates the detailed 2D Body Trauma Doll & Limb Diagnostics inside the Inventory Modal.
+   * Обновляет 2D Куклу тела, статистику конечностей и визуальную галерею 56 видов и рисунков ран GoreBox.
    */
   _updateInventoryDollInspector() {
     const titleEl = document.getElementById('inv-doll-title');
     const breakdownEl = document.getElementById('inv-limb-breakdown');
+    const galleryEl = document.getElementById('inv-wounds-gallery');
     if (!titleEl || !breakdownEl) return;
 
     const inspectNpc =
@@ -635,9 +618,11 @@ class MezhdugornySandboxGame {
         : null;
 
     const limbMap = inspectNpc ? inspectNpc.limbs : this.player.playerLimbs;
+    const activeWounds = inspectNpc ? inspectNpc.activeWounds : this.player.activeWounds;
+
     titleEl.textContent = inspectNpc
-      ? `🩺 Кукла травм НПС: ${inspectNpc.name} (${Math.ceil(inspectNpc.hp)} HP)`
-      : `🩺 Кукла травм: Игрок (${Math.ceil(this.player.hp)} HP)`;
+      ? `Кукла НПС: ${inspectNpc.name} (${Math.ceil(inspectNpc.hp)} HP | Ран: ${activeWounds.length})`
+      : `Кукла Игрока (${Math.ceil(this.player.hp)} HP | Ран: ${activeWounds.length})`;
 
     const keys = [
       'head',
@@ -661,7 +646,6 @@ class MezhdugornySandboxGame {
       svgPart.setAttribute('class', `doll-part ${st}`);
     }
 
-    // Build readable breakdown rows for major body zones
     const summaryRows = [
       { key: 'head', name: 'Голова' },
       { key: 'upperTorso', name: 'Грудная клетка' },
@@ -678,15 +662,61 @@ class MezhdugornySandboxGame {
       if (!limb) continue;
       const st = this._getLimbTraumaClass(limb);
       const pct = Math.max(0, Math.round((limb.hp / limb.maxHp) * 100));
+      const wCount = limb.wounds ? limb.wounds.length : 0;
       let statusLabel = `${pct}%`;
-      if (st === 'severed') statusLabel = 'ОТСОЕДИНЕНА ⚙️';
-      else if (st === 'critical') statusLabel = `${pct}% (Критич.)`;
-      else if (st === 'bleeding') statusLabel = `${pct}% (Поврежд.)`;
+      if (st === 'severed') statusLabel = 'ОТСОЕДИНЕНА';
+      else if (wCount > 0) statusLabel = `${pct}% (Ран: ${wCount})`;
 
       const row = document.createElement('div');
       row.className = `limb-stat-row ${st}`;
       row.innerHTML = `<span>${item.name}</span><strong>${statusLabel}</strong>`;
       breakdownEl.appendChild(row);
+    }
+
+    // Отрисовываем полученные раны + полный каталог из 56 видов и 56 рисунков ран GoreBox
+    if (galleryEl) {
+      galleryEl.innerHTML = '';
+
+      // 1. Активные раны на теле
+      for (const w of activeWounds) {
+        const card = document.createElement('div');
+        card.className = 'wound-card-row';
+        const bleedDesc = w.arterial ? 'Артериальный выброс крови' : `Кровотечение ${w.bleedRate.toFixed(1)} ед/с`;
+        card.innerHTML = `
+          <img class="wound-thumb-img" src="${w.previewUrl}" alt="Рана #${w.id}" />
+          <div class="wound-card-meta">
+            <span class="wound-card-title">[АКТИВНА — ${w.limbLabel}] #${w.id}. ${w.name}</span>
+            <span class="wound-card-sub">${bleedDesc}</span>
+          </div>
+        `;
+        galleryEl.appendChild(card);
+      }
+
+      // 2. Все 56 видов и рисунков ран из атласа GoreBox
+      const atlas =
+        this.textures && this.textures.gore && this.textures.gore.woundAtlas56
+          ? this.textures.gore.woundAtlas56
+          : [];
+      for (const wDef of atlas) {
+        const card = document.createElement('div');
+        card.className = 'wound-card-row catalog-row';
+        const catLabel =
+          wDef.category === 'bullet'
+            ? 'Пулевое'
+            : wDef.category === 'blunt'
+            ? 'Ушиб / Гематома'
+            : wDef.category === 'slash'
+            ? 'Резаная / Лом'
+            : 'Взрывная / Открытый перелом';
+        card.innerHTML = `
+          <img class="wound-thumb-img" src="${wDef.previewUrl}" alt="Рисунок раны #${wDef.id}" />
+          <div class="wound-card-meta">
+            <span class="wound-card-title">Вид раны #${wDef.id}/56: ${wDef.name}</span>
+            <span class="wound-card-sub">Тип: ${catLabel} | Кровопотеря: ${wDef.bleedRate.toFixed(1)}${wDef.arterial ? ' (Артерия)' : ''}</span>
+          </div>
+        `;
+        galleryEl.appendChild(card);
+      }
     }
   }
 
@@ -703,29 +733,29 @@ class MezhdugornySandboxGame {
     const pos = this._getSpawnPointInFront(3.0, 1.4);
     if (kind === 'crate_std') {
       this.propsManager.spawnCrate(pos, 0.82, false);
-      this.showToast('📦 +Ящик');
+      this.showToast('Создан деревянный ящик');
     } else if (kind === 'bottle_single') {
       this.propsManager.spawnBottle(pos, 'green');
-      this.showToast('🍾 +Бутылка');
+      this.showToast('Создана бутылка');
     } else if (kind === 'bottle_pack') {
       const flavors = ['green', 'amber', 'clear'];
       for (let i = 0; i < 6; i++) {
         const bp = pos.clone().add(new THREE.Vector3((i - 2.5) * 0.22, 0, 0));
         this.propsManager.spawnBottle(bp, flavors[i % 3]);
       }
-      this.showToast('🍾 +6 бутылок');
+      this.showToast('Создано 6 бутылок');
     } else if (kind === 'cinderblock') {
       this.propsManager.spawnCinderBlock(pos);
-      this.showToast('🧱 +Шлакоблок');
+      this.showToast('Создан шлакоблок');
     } else if (kind === 'barrel_red') {
       this.propsManager.spawnBarrel(pos, true);
-      this.showToast('🛢️ +Взрывная бочка');
+      this.showToast('Создана взрывная бочка');
     } else if (kind === 'barrel_steel') {
       this.propsManager.spawnBarrel(pos, false);
-      this.showToast('🛢️ +Стальная бочка');
+      this.showToast('Создана стальная бочка');
     } else if (kind === 'worklight') {
       this.propsManager.spawnPortableWorklight(pos);
-      this.showToast('🔦 +Прожектор');
+      this.showToast('Создан прожектор');
     } else if (kind === 'npc_survivor' || kind === 'npc_hostile' || kind === 'npc_dummy') {
       const names = ['Виктор', 'Захар', 'Макар', 'Север', 'Клим'];
       const pickName = names[this.nextNpcId % names.length];
@@ -747,13 +777,13 @@ class MezhdugornySandboxGame {
         npc._enterRetaliationMode();
       }
       this.npcs.push(npc);
-      this.showToast(`🧍 +НПС ${npc.name}`);
+      this.showToast(`Создан НПС: ${npc.name}`);
     }
   }
 
   toggleSlowMo() {
     this.timeScale = this.timeScale < 0.9 ? 1.0 : 0.25;
-    this.showToast(this.timeScale < 0.9 ? '⏱ Слоу-мо 0.25x' : '⏱ Время 1.0x');
+    this.showToast(this.timeScale < 0.9 ? 'Замедление времени 0.25x' : 'Скорость времени 1.0x');
   }
 
   resetSandbox() {
@@ -778,7 +808,7 @@ class MezhdugornySandboxGame {
     this.player.verticalVel = 0;
     this.player.yaw = 0;
     this.player.pitch = -0.06;
-    this.showToast('🔄 Полигон перезапущен: внешность НПС обновлена случайно');
+    this.showToast('Полигон перезапущен');
   }
 
   _updateHUD(now) {
@@ -800,7 +830,7 @@ class MezhdugornySandboxGame {
       const pistolLabel = document.getElementById('slot-pistol-label');
       if (pistolLabel) {
         pistolLabel.textContent =
-          this.player.reloadTimer > 0 ? 'ПМ ⏳' : `ПМ ${this.player.pistolAmmo}`;
+          this.player.reloadTimer > 0 ? 'ПМ ПЗР' : `ПМ ${this.player.pistolAmmo}`;
       }
 
       this._updateBodyDollHUD();

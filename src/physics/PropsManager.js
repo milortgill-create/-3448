@@ -13,6 +13,7 @@ export class PropsManager {
     this.props = [];
     this.debris = [];
     this.decals = [];
+    this.bloodParticles = [];
     this.explosions = [];
     this._nextId = 1;
 
@@ -639,7 +640,7 @@ export class PropsManager {
         this.onSoundEvent(pos, 18, 'glass_shatter', 'Звон разбитой бутылки');
       }
       if (this.onToast) {
-        this.onToast('🍾 Стеклянная бутылка разбилась вдребезги!');
+        this.onToast('Стеклянная бутылка разбилась вдребезги');
       }
     } else if (prop.type === 'crate') {
       this.sound.playWoodBreak();
@@ -651,7 +652,7 @@ export class PropsManager {
         this.onSoundEvent(pos, 22, 'crate_break', 'Треск сломанного ящика');
       }
       if (this.onToast) {
-        this.onToast(`📦 ${prop.name} разлетелся на доски!`);
+        this.onToast(`${prop.name} разлетелся на доски`);
       }
     } else if (prop.type === 'barrel_explosive') {
       this._spawnBarrelShrapnel(pos);
@@ -858,6 +859,10 @@ export class PropsManager {
       const dec = this.decals.pop();
       this.scene.remove(dec);
     }
+    while (this.bloodParticles.length > 0) {
+      const bp = this.bloodParticles.pop();
+      this.scene.remove(bp.mesh);
+    }
   }
 
   /**
@@ -876,7 +881,7 @@ export class PropsManager {
       this.onSoundEvent(centerPos, 42, 'explosion', 'Мощный взрыв бочки!');
     }
     if (this.onToast) {
-      this.onToast('💥 ДЕТОНАЦИЯ! Осколки и ударная волна!');
+      this.onToast('ДЕТОНАЦИЯ: осколки и ударная волна');
     }
 
     const expGroup = new THREE.Group();
@@ -1102,6 +1107,39 @@ export class PropsManager {
     }
   }
 
+  /**
+   * Брызги КРАСНОЙ крови в стиле GoreBox (частицы разлетаются по баллистической дуге и оставляют красные пятна на полу).
+   */
+  spawnBloodSplatter(originPos, count = 16, dirBias = null) {
+    if (!originPos) return;
+    if (!this._bloodDropGeo) {
+      this._bloodDropGeo = new THREE.BoxGeometry(0.036, 0.036, 0.036);
+      this._bloodMatDark = new THREE.MeshBasicMaterial({ color: 0xb91c1c });
+      this._bloodMatBright = new THREE.MeshBasicMaterial({ color: 0xdc2626 });
+    }
+
+    for (let i = 0; i < count; i++) {
+      const m = new THREE.Mesh(
+        this._bloodDropGeo,
+        i % 2 === 0 ? this._bloodMatDark : this._bloodMatBright
+      );
+      m.position.copy(originPos);
+      const scale = 0.7 + Math.random() * 1.1;
+      m.scale.setScalar(scale);
+      this.scene.add(m);
+
+      const vx = (Math.random() - 0.5) * 4.6 + (dirBias ? dirBias.x * 0.16 : 0);
+      const vy = 1.2 + Math.random() * 3.2 + (dirBias ? Math.max(0, dirBias.y * 0.12) : 0);
+      const vz = (Math.random() - 0.5) * 4.6 + (dirBias ? dirBias.z * 0.16 : 0);
+
+      this.bloodParticles.push({
+        mesh: m,
+        vel: new THREE.Vector3(vx, vy, vz),
+        life: 0.65 + Math.random() * 0.45
+      });
+    }
+  }
+
   update(dt) {
     const toDetonate = [];
 
@@ -1203,6 +1241,28 @@ export class PropsManager {
         }
         sp.mesh.lookAt(sp.mesh.position.clone().add(sp.vel));
         sp.mesh.visible = ex.age < 1.1;
+      }
+    }
+
+    // Animate red blood droplets & floor blood splatters
+    for (let i = this.bloodParticles.length - 1; i >= 0; i--) {
+      const bp = this.bloodParticles[i];
+      bp.life -= dt;
+      bp.mesh.position.addScaledVector(bp.vel, dt);
+      bp.vel.y -= 14.5 * dt;
+
+      if (bp.mesh.position.y <= 0.03) {
+        if (Math.random() < 0.35) {
+          this.addFloorDecal(bp.mesh.position.x, bp.mesh.position.z, 0.14 + Math.random() * 0.12);
+        }
+        this.scene.remove(bp.mesh);
+        this.bloodParticles.splice(i, 1);
+        continue;
+      }
+
+      if (bp.life <= 0) {
+        this.scene.remove(bp.mesh);
+        this.bloodParticles.splice(i, 1);
       }
     }
   }

@@ -358,11 +358,11 @@ export class TouchControls {
       const iconSpan = this.btnFreeze.querySelector('.abtn-icon');
       if (iconSpan) {
         if (isHolding) {
-          iconSpan.textContent = '❄️';
+          iconSpan.textContent = 'ФИКС';
         } else if (this.player.activeSlot === 4) {
-          iconSpan.textContent = '🔄';
+          iconSpan.textContent = 'ПЗР';
         } else {
-          iconSpan.textContent = '⚙️';
+          iconSpan.textContent = 'РЕЖ';
         }
       }
     }

@@ -2,13 +2,14 @@ import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 
 /**
- * FirstPersonPlayer (ШАГ 2 – ШАГ 4):
- * - ШАГ 4: Новая детализированная 3D-модель рук от первого лица (манжеты серой кофты, предплечья,
+ * FirstPersonPlayer:
+ * - Детализированная 3D-модель рук от первого лица (манжеты серой кофты, предплечья,
  *   беспалые перчатки с защитой костяшек, ремешком на запястье и сгибающимися фалангами пальцев).
- * - ШАГ 4: Полноценные анимации: idle (дыхание в покое), ходьба/бег, удар рукой (сжатие кулака и выпад),
+ * - Полноценные анимации: idle (дыхание в покое), ходьба/бег, удар рукой (сжатие кулака и выпад),
  *   стрельба с отдачей затвора и полноценная анимация перезарядки магазина пистолета.
- * - ШАГ 4: Защита от залипания рук в предметах (динамический отвод rigRoot при сближении с объектами).
- * - ШАГ 2: Размещение динамических декалей повреждений из пула 40 текстур на полу и стенах/объектах при попадании.
+ * - Защита от залипания рук в предметах (динамический отвод rigRoot при сближении с объектами).
+ * - Передача точного типа урона ('blunt', 'slash', 'bullet', 'blast') для системы 56 видов ран GoreBox.
+ * - Полное отсутствие смайликов в интерфейсе и уведомлениях.
  */
 export class FirstPersonPlayer {
   constructor(camera, scene, world, propsManager, soundManager, onToast, onHitmarker, onPlayerAttackedNPC) {
@@ -26,25 +27,26 @@ export class FirstPersonPlayer {
     this.armor = 0;
     this.adrenalineTimer = 0;
 
-    // 2D Кукла состояния частей тела
+    // 2D Кукла состояния частей тела игрока (с поддержкой ран из атласа 56 видов)
     this.playerLimbs = {
-      head: { label: 'Голова', hp: 100, maxHp: 100, bleeding: false, severed: false },
-      upperTorso: { label: 'Грудь', hp: 100, maxHp: 100, bleeding: false, severed: false },
-      abdomen: { label: 'Живот', hp: 100, maxHp: 100, bleeding: false, severed: false },
-      upperArmL: { label: 'Л. Плечо', hp: 100, maxHp: 100, bleeding: false, severed: false },
-      forearmL: { label: 'Л. Предплечье', hp: 100, maxHp: 100, bleeding: false, severed: false },
-      upperArmR: { label: 'П. Плечо', hp: 100, maxHp: 100, bleeding: false, severed: false },
-      forearmR: { label: 'П. Предплечье', hp: 100, maxHp: 100, bleeding: false, severed: false },
-      thighL: { label: 'Л. Бедро', hp: 100, maxHp: 100, bleeding: false, severed: false },
-      calfL: { label: 'Л. Голень', hp: 100, maxHp: 100, bleeding: false, severed: false },
-      thighR: { label: 'П. Бедро', hp: 100, maxHp: 100, bleeding: false, severed: false },
-      calfR: { label: 'П. Голень', hp: 100, maxHp: 100, bleeding: false, severed: false }
+      head: { label: 'Голова', hp: 100, maxHp: 100, bleeding: false, severed: false, wounds: [] },
+      upperTorso: { label: 'Грудь', hp: 100, maxHp: 100, bleeding: false, severed: false, wounds: [] },
+      abdomen: { label: 'Живот', hp: 100, maxHp: 100, bleeding: false, severed: false, wounds: [] },
+      upperArmL: { label: 'Л. Плечо', hp: 100, maxHp: 100, bleeding: false, severed: false, wounds: [] },
+      forearmL: { label: 'Л. Предплечье', hp: 100, maxHp: 100, bleeding: false, severed: false, wounds: [] },
+      upperArmR: { label: 'П. Плечо', hp: 100, maxHp: 100, bleeding: false, severed: false, wounds: [] },
+      forearmR: { label: 'П. Предплечье', hp: 100, maxHp: 100, bleeding: false, severed: false, wounds: [] },
+      thighL: { label: 'Л. Бедро', hp: 100, maxHp: 100, bleeding: false, severed: false, wounds: [] },
+      calfL: { label: 'Л. Голень', hp: 100, maxHp: 100, bleeding: false, severed: false, wounds: [] },
+      thighR: { label: 'П. Бедро', hp: 100, maxHp: 100, bleeding: false, severed: false, wounds: [] },
+      calfR: { label: 'П. Голень', hp: 100, maxHp: 100, bleeding: false, severed: false, wounds: [] }
     };
+    this.activeWounds = [];
 
     this.backpack = [
-      { kind: 'bottle', name: '🍾 Стеклянная бутылка (Зелёная)' },
-      { kind: 'crate_std', name: '📦 Деревянный ящик снабжения' },
-      { kind: 'barrel_red', name: '🛢️ Бочка с пропаном (Взрывная)' }
+      { kind: 'bottle', name: 'Стеклянная бутылка (Зелёная)' },
+      { kind: 'crate_std', name: 'Деревянный ящик снабжения' },
+      { kind: 'barrel_red', name: 'Бочка с пропаном (Взрывная)' }
     ];
 
     this.yaw = 0;
@@ -121,7 +123,9 @@ export class FirstPersonPlayer {
       mass: 0,
       type: CANNON.Body.KINEMATIC,
       shape: new CANNON.Sphere(0.42),
-      position: new CANNON.Vec3(this.playerPos.x, 0.9, this.playerPos.z)
+      position: new CANNON.Vec3(this.playerPos.x, 0.9, this.playerPos.z),
+      collisionFilterGroup: 4,
+      collisionFilterMask: 1
     });
     this.body.userData = { type: 'player' };
     this.world.addBody(this.body);
@@ -142,7 +146,7 @@ export class FirstPersonPlayer {
     this.flashlightOn = !this.flashlightOn;
     this.flashlight.intensity = this.flashlightOn ? 95 : 0;
     if (this.onToast) {
-      this.onToast(this.flashlightOn ? '🔦 Фонарик включён' : '🔦 Фонарик выключен');
+      this.onToast(this.flashlightOn ? 'Фонарь включён' : 'Фонарь выключен');
     }
   }
 
@@ -150,10 +154,6 @@ export class FirstPersonPlayer {
     this.cameraShake = Math.min(1.0, this.cameraShake + amount);
   }
 
-  /**
-   * ШАГ 4: Детализированная 3D-модель рук от первого лица (манжета кофты, предплечье,
-   * беспалая перчатка с защитой костяшек, ремешком и сгибающимися фалангами пальцев).
-   */
   _initFirstPersonViewmodel() {
     this.viewmodelScene = new THREE.Scene();
     this.viewmodelCamera = new THREE.PerspectiveCamera(
@@ -173,31 +173,28 @@ export class FirstPersonPlayer {
     this.rigRoot = new THREE.Group();
     this.viewmodelScene.add(this.rigRoot);
 
-    const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x989ea5, roughness: 0.76, metalness: 0.04 });
-    const cuffMat = new THREE.MeshStandardMaterial({ color: 0x7e858d, roughness: 0.82, metalness: 0.04 });
-    const skinMat = new THREE.MeshStandardMaterial({ color: 0xf2d2b6, roughness: 0.56, metalness: 0.03 });
-    const gloveMat = new THREE.MeshStandardMaterial({ color: 0x3f2b21, roughness: 0.65, metalness: 0.06 });
-    const knuckleMat = new THREE.MeshStandardMaterial({ color: 0x261912, roughness: 0.45, metalness: 0.18 });
+    const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.76, metalness: 0.04, flatShading: true });
+    const cuffMat = new THREE.MeshStandardMaterial({ color: 0x83898f, roughness: 0.82, metalness: 0.04, flatShading: true });
+    const skinMat = new THREE.MeshStandardMaterial({ color: 0xf3d4b5, roughness: 0.58, metalness: 0.03, flatShading: true });
+    const gloveMat = new THREE.MeshStandardMaterial({ color: 0x493325, roughness: 0.66, metalness: 0.06, flatShading: true });
+    const knuckleMat = new THREE.MeshStandardMaterial({ color: 0x2b1c12, roughness: 0.48, metalness: 0.16, flatShading: true });
 
     const buildDetailedArm = (isLeft) => {
       const armGroup = new THREE.Group();
       const s = isLeft ? -1 : 1;
 
-      // 1. Рукав серой кофты + ребристая манжета
       const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.112, 0.112, 0.22), sleeveMat);
       sleeve.position.set(0, -0.014, 0.17);
       const cuff = new THREE.Mesh(new THREE.BoxGeometry(0.116, 0.116, 0.028), cuffMat);
       cuff.position.set(0, -0.014, 0.055);
       armGroup.add(sleeve, cuff);
 
-      // 2. Анатомическое предплечье + косточка запястья
       const forearmUpper = new THREE.Mesh(new THREE.BoxGeometry(0.098, 0.096, 0.16), skinMat);
       forearmUpper.position.set(0, -0.011, -0.02);
       const forearmWrist = new THREE.Mesh(new THREE.BoxGeometry(0.090, 0.084, 0.13), skinMat);
       forearmWrist.position.set(0, -0.009, -0.14);
       armGroup.add(forearmUpper, forearmWrist);
 
-      // 3. Беспалая перчатка + ремешок запястья + защитные накладки на костяшках
       const wristStrap = new THREE.Mesh(new THREE.BoxGeometry(0.096, 0.090, 0.032), knuckleMat);
       wristStrap.position.set(0, -0.008, -0.195);
       const gloveBody = new THREE.Mesh(new THREE.BoxGeometry(0.104, 0.088, 0.108), gloveMat);
@@ -207,7 +204,6 @@ export class FirstPersonPlayer {
       knuckleGuard.position.set(0, 0.034, -0.285);
       armGroup.add(wristStrap, gloveBody, knuckleGuard);
 
-      // 4. Сгибающиеся фаланги 4 пальцев + большой палец
       const fingerGroup = new THREE.Group();
       fingerGroup.position.set(0, -0.004, -0.304);
       const fingerPivots = [];
@@ -404,7 +400,7 @@ export class FirstPersonPlayer {
     this.crowbarMesh.visible = false;
     this.rightArm.add(this.crowbarMesh);
 
-    // 3. 9MM TACTICAL PM PISTOL WITH ANIMATED SLIDE & REMOVABLE MAGAZINE FOR RELOAD!
+    // 3. 9MM TACTICAL PM PISTOL WITH ANIMATED SLIDE & REMOVABLE MAGAZINE FOR RELOAD
     this.pistolMesh = new THREE.Group();
     const slideSteel = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.88, roughness: 0.24 });
     const frameSteel = new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.75, roughness: 0.36 });
@@ -437,7 +433,6 @@ export class FirstPersonPlayer {
     gripCore.add(panelL, panelR);
     this.pistolMesh.add(gripCore);
 
-    // Removable Magazine Group (Slides out & back in during reload animation!)
     this.pistolMagMesh = new THREE.Group();
     this.pistolMagMesh.position.set(0, -0.012, -0.205);
     this.pistolMagMesh.rotation.x = 0.24;
@@ -644,16 +639,13 @@ export class FirstPersonPlayer {
     });
   }
 
-  /**
-   * ШАГ 4: Полноценная анимация перезарядки пистолета ПМ.
-   */
   startReload() {
     if (this.reloadTimer > 0) return;
     this.reloadTimer = this.reloadDuration;
     this.pistolAmmo = this.pistolMaxAmmo;
     this.sound.playReload();
     if (this.onToast) {
-      this.onToast('🔫 Перезарядка ПМ (12/12)...');
+      this.onToast('Перезарядка ПМ (12/12)');
     }
   }
 
@@ -661,9 +653,9 @@ export class FirstPersonPlayer {
     this.rcv2Mode = (this.rcv2Mode + 1) % 3;
     const colors = [0x38bdf8, 0xef4444, 0xa855f7];
     const names = [
-      '⚡ RCV2: Грави-Захват',
-      '⚙️ RCV2: Отсоединение сустава',
-      '💥 RCV2: Телекинез-Импульс'
+      'RCV2: Грави-Захват',
+      'RCV2: Отсоединение сустава',
+      'RCV2: Телекинез-Импульс'
     ];
     const col = colors[this.rcv2Mode];
     this.rcv2CoreMat.color.setHex(col);
@@ -695,7 +687,7 @@ export class FirstPersonPlayer {
 
     if (this.activeSlot === 1) {
       this.punchHandAlt = (this.punchHandAlt + 1) % 2;
-      this._meleeAttack(20 * dmgBoost, 2.85, 12.5, 'Кулак');
+      this._meleeAttack(18 * dmgBoost, 2.85, 9.5, 'blunt');
     } else if (this.activeSlot === 2) {
       if (this.rcv2Mode === 0) {
         this.tryGrabTarget();
@@ -707,9 +699,9 @@ export class FirstPersonPlayer {
           const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion).normalize();
           if (hit.limb.severable && !hit.limb.severed) {
             hit.npc.severLimb(hit.limb, dir.clone().multiplyScalar(22));
-            if (this.onToast) this.onToast(`⚙️ Сегмент отсоединён: ${hit.limb.label}`);
+            if (this.onToast) this.onToast(`Отсоединён сегмент: ${hit.limb.label}`);
           } else {
-            hit.npc.damageLimb(hit.limb, 45, hit.point, dir.clone().multiplyScalar(25), 'slash', true);
+            hit.npc.damageLimb(hit.limb, 45, hit.point, dir.clone().multiplyScalar(25), 'blast', true);
           }
           if (this.onHitmarker) this.onHitmarker();
           if (this.onPlayerAttackedNPC) this.onPlayerAttackedNPC(this.getPosition(), hit.npc);
@@ -732,14 +724,14 @@ export class FirstPersonPlayer {
           b.velocity.set(dir.x * 26, dir.y * 26 + 3.5, dir.z * 26);
           if (this.onHitmarker) this.onHitmarker();
         } else if (hit && hit.npc && hit.limb) {
-          hit.npc.damageLimb(hit.limb, 32, hit.point, dir.clone().multiplyScalar(28), 'slash', true);
-          hit.npc.enterRagdoll(3.8, dir.multiplyScalar(16));
+          hit.npc.damageLimb(hit.limb, 32, hit.point, dir.clone().multiplyScalar(24), 'blast', true);
+          hit.npc.enterRagdoll(3.2, dir.multiplyScalar(14));
           if (this.onHitmarker) this.onHitmarker();
           if (this.onPlayerAttackedNPC) this.onPlayerAttackedNPC(this.getPosition(), hit.npc);
         }
       }
     } else if (this.activeSlot === 3) {
-      this._meleeAttack(38 * dmgBoost, 3.2, 19.0, 'Монтировка');
+      this._meleeAttack(36 * dmgBoost, 3.2, 16.0, 'slash');
     } else if (this.activeSlot === 4) {
       this._firePistol();
     }
@@ -770,13 +762,13 @@ export class FirstPersonPlayer {
       this.holdDistance = mode === 'rcv2' ? Math.max(1.8, Math.min(8.5, hit.distance)) : 1.7;
       hit.prop.body.wakeUp();
       if (this.onToast) {
-        this.onToast(`✋ Захвачено: ${hit.prop.name}`);
+        this.onToast(`Захвачено: ${hit.prop.name}`);
       }
       return true;
     } else if (hit.npc && hit.limb) {
       this.lastInspectedNpc = hit.npc;
       if (!hit.limb.severed) {
-        hit.npc.enterRagdoll(3.8);
+        hit.npc.enterRagdoll(3.2);
       }
       this.heldTarget = {
         type: 'npc_limb',
@@ -787,7 +779,7 @@ export class FirstPersonPlayer {
       };
       this.holdDistance = mode === 'rcv2' ? Math.max(1.8, Math.min(8.0, hit.distance)) : 1.75;
       if (this.onToast) {
-        this.onToast(`✋ Схвачен: ${hit.npc.name} (${hit.limb.label})`);
+        this.onToast(`Схвачен: ${hit.npc.name} (${hit.limb.label})`);
       }
       return true;
     }
@@ -800,12 +792,12 @@ export class FirstPersonPlayer {
       if (b.type === CANNON.Body.STATIC) {
         b.type = CANNON.Body.DYNAMIC;
         b.updateMassProperties();
-        if (this.onToast) this.onToast('🔓 Объект разморожен');
+        if (this.onToast) this.onToast('Объект разморожен');
       } else {
         b.type = CANNON.Body.STATIC;
         b.velocity.set(0, 0, 0);
         b.angularVelocity.set(0, 0, 0);
-        if (this.onToast) this.onToast('❄️ Объект заморожен в воздухе');
+        if (this.onToast) this.onToast('Объект зафиксирован в воздухе');
       }
       this.heldTarget = null;
       this.beamLine.visible = false;
@@ -838,7 +830,7 @@ export class FirstPersonPlayer {
         const limb = this.heldTarget.limb;
         const npc = this.heldTarget.npc;
         if (this.heldTarget.mode === 'rcv2') {
-          npc.damageLimb(limb, 30, limb.mesh.position, dir.clone().multiplyScalar(20), 'slash', true);
+          npc.damageLimb(limb, 30, limb.mesh.position, dir.clone().multiplyScalar(20), 'blunt', true);
           if (this.onPlayerAttackedNPC) {
             this.onPlayerAttackedNPC(this.getPosition(), npc);
           }
@@ -866,12 +858,11 @@ export class FirstPersonPlayer {
       hit.prop.body.wakeUp();
       hit.prop.body.velocity.set(dir.x * 13, 3.2, dir.z * 13);
       this.propsManager.damageProp(hit.prop, 22, hit.point);
-      this.propsManager.addSurfaceDamageDecal(hit.point, hit.normal, 0.22);
       this.sound.playImpact('wood', 0.8);
     } else if (hit && hit.npc && hit.limb) {
       this.lastInspectedNpc = hit.npc;
-      hit.npc.damageLimb(hit.limb, 18, hit.point, dir.clone().multiplyScalar(22), 'slash', true);
-      hit.npc.enterRagdoll(3.2, dir.clone().multiplyScalar(9.5));
+      hit.npc.damageLimb(hit.limb, 18, hit.point, dir.clone().multiplyScalar(18), 'blunt', true);
+      hit.npc.enterRagdoll(2.6, dir.clone().multiplyScalar(8.5));
       if (this.onHitmarker) this.onHitmarker();
       if (this.onPlayerAttackedNPC) {
         this.onPlayerAttackedNPC(this.getPosition(), hit.npc);
@@ -879,7 +870,7 @@ export class FirstPersonPlayer {
     }
   }
 
-  _meleeAttack(damage, range, force, weaponLabel) {
+  _meleeAttack(damage, range, force, damageType = 'blunt') {
     if (this.swingTimer > 0.08) return;
     this.swingTimer = 0.32;
     this.sound.playFootstep(false);
@@ -898,18 +889,16 @@ export class FirstPersonPlayer {
       hit.prop.body.velocity.y += 1.6;
       hit.prop.body.velocity.z += dir.z * (force / Math.max(1, hit.prop.mass * 0.35));
       this.propsManager.damageProp(hit.prop, damage, hit.point);
-      this.propsManager.addSurfaceDamageDecal(hit.point, hit.normal, 0.24);
       this.sound.playImpact(hit.prop.type === 'crate' ? 'wood' : 'metal', 0.85);
       if (this.onHitmarker) this.onHitmarker();
     } else if (hit.npc && hit.limb) {
       this.lastInspectedNpc = hit.npc;
-      hit.npc.damageLimb(hit.limb, damage, hit.point, dir.clone().multiplyScalar(force * 1.4), 'slash', true);
+      hit.npc.damageLimb(hit.limb, damage, hit.point, dir.clone().multiplyScalar(force), damageType, true);
       if (this.onHitmarker) this.onHitmarker();
       if (this.onPlayerAttackedNPC) {
         this.onPlayerAttackedNPC(this.getPosition(), hit.npc);
       }
     } else if (hit.isWorldSurface) {
-      this.propsManager.addSurfaceDamageDecal(hit.point, hit.normal, 0.24);
       this.sound.playImpact('concrete', 0.75);
     }
   }
@@ -917,7 +906,6 @@ export class FirstPersonPlayer {
   _firePistol() {
     if (this.shootCooldown > 0 || this.reloadTimer > 0) return;
 
-    // Auto-reload when magazine is empty!
     if (this.pistolAmmo <= 0) {
       this.startReload();
       return;
@@ -957,18 +945,15 @@ export class FirstPersonPlayer {
         new CANNON.Vec3(hit.point.x, hit.point.y, hit.point.z)
       );
       this.propsManager.damageProp(hit.prop, 34, hit.point);
-      this.propsManager.addSurfaceDamageDecal(hit.point, hit.normal, 0.22);
       if (this.onHitmarker) this.onHitmarker();
     } else if (hit.npc && hit.limb) {
       this.lastInspectedNpc = hit.npc;
-      hit.npc.damageLimb(hit.limb, 25, hit.point, dir.clone().multiplyScalar(22), 'bullet', true);
+      hit.npc.damageLimb(hit.limb, 26, hit.point, dir.clone().multiplyScalar(18), 'bullet', true);
       if (this.onHitmarker) this.onHitmarker();
       if (this.onPlayerAttackedNPC) {
         this.onPlayerAttackedNPC(this.getPosition(), hit.npc);
       }
     } else if (hit.isWorldSurface) {
-      // ШАГ 2: При попадании пули в пол или стены/столы остаются тёмные декали повреждений из пула 40 текстур!
-      this.propsManager.addSurfaceDamageDecal(hit.point, hit.normal, 0.24);
       this.sound.playImpact('concrete', 0.55);
     }
 
@@ -1003,6 +988,28 @@ export class FirstPersonPlayer {
       if (limb.hp < 55) {
         limb.bleeding = true;
       }
+      const atlas =
+        this.propsManager &&
+        this.propsManager.textures &&
+        this.propsManager.textures.gore &&
+        this.propsManager.textures.gore.woundAtlas56
+          ? this.propsManager.textures.gore.woundAtlas56
+          : [];
+      if (atlas.length > 0) {
+        const wDef = atlas[Math.floor(Math.random() * atlas.length)];
+        const entry = {
+          id: wDef.id,
+          name: wDef.name,
+          category: wDef.category,
+          limbKey: chosenKey,
+          limbLabel: limb.label,
+          bleedRate: wDef.bleedRate,
+          arterial: wDef.arterial,
+          previewUrl: wDef.previewUrl
+        };
+        limb.wounds.push(entry);
+        this.activeWounds.unshift(entry);
+      }
     }
 
     if (knockback) {
@@ -1017,38 +1024,42 @@ export class FirstPersonPlayer {
       this.velZ = 0;
       this.verticalVel = 0;
       if (this.onToast) {
-        this.onToast('🔄 Персонаж восстановлен на стартовой точке');
+        this.onToast('Персонаж восстановлен на стартовой точке');
       }
     }
   }
 
   useMedkit(silent = false) {
     this.hp = this.maxHp;
+    this.activeWounds = [];
     for (const k of Object.keys(this.playerLimbs)) {
       this.playerLimbs[k].hp = this.playerLimbs[k].maxHp;
       this.playerLimbs[k].bleeding = false;
       this.playerLimbs[k].severed = false;
+      this.playerLimbs[k].wounds = [];
     }
     if (!silent && this.onToast) {
-      this.onToast('💉 Аптечка использована: 100 HP, все травмы вылечены!');
+      this.onToast('Аптечка использована: 100 HP, все раны вылечены');
     }
   }
 
   useBandage() {
     this.hp = Math.min(this.maxHp, this.hp + 25);
+    this.activeWounds = [];
     for (const k of Object.keys(this.playerLimbs)) {
       this.playerLimbs[k].bleeding = false;
+      this.playerLimbs[k].wounds = [];
       this.playerLimbs[k].hp = Math.min(this.playerLimbs[k].maxHp, this.playerLimbs[k].hp + 35);
     }
     if (this.onToast) {
-      this.onToast('🩹 Наложены повязки (+25 HP)');
+      this.onToast('Наложены повязки: кровотечение остановлено (+25 HP)');
     }
   }
 
   equipArmor() {
     this.armor = 100;
     if (this.onToast) {
-      this.onToast('🛡️ Бронежилет «Междугорный» надет (100 Брони)');
+      this.onToast('Бронежилет надет (100 Брони)');
     }
   }
 
@@ -1056,13 +1067,13 @@ export class FirstPersonPlayer {
     this.adrenalineTimer = 20.0;
     this.hp = Math.min(this.maxHp, this.hp + 30);
     if (this.onToast) {
-      this.onToast('💊 Адреналин вколот! Скорость и сила удара увеличены на 20 сек!');
+      this.onToast('Адреналин введён: скорость и сила удара увеличены на 20 сек');
     }
   }
 
   storeHeldInBackpack() {
     if (!this.heldTarget || !this.heldTarget.prop) {
-      if (this.onToast) this.onToast('Сначала возьмите предмет в руки (✋), чтобы убрать в рюкзак');
+      if (this.onToast) this.onToast('Сначала возьмите предмет в руки (ЗАХВАТ), чтобы убрать в рюкзак');
       return false;
     }
     const prop = this.heldTarget.prop;
@@ -1075,14 +1086,14 @@ export class FirstPersonPlayer {
     else if (prop.type === 'cinderblock') kind = 'cinderblock';
     else if (prop.type === 'worklight') kind = 'worklight';
 
-    this.backpack.push({ kind, name: `📦 ${prop.name}` });
+    this.backpack.push({ kind, name: prop.name });
 
     this.scene.remove(prop.mesh);
     this.world.removeBody(prop.body);
     const idx = this.propsManager.props.indexOf(prop);
     if (idx !== -1) this.propsManager.props.splice(idx, 1);
 
-    if (this.onToast) this.onToast(`🎒 Убрано в инвентарь: ${prop.name}`);
+    if (this.onToast) this.onToast(`Убрано в инвентарь: ${prop.name}`);
     return true;
   }
 
@@ -1125,7 +1136,6 @@ export class FirstPersonPlayer {
       }
     }
 
-    // Check floor / static obstacle intersection for surface damage decals
     if (includeWorldSurfaces) {
       const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
       const hitPt = new THREE.Vector3();
@@ -1387,7 +1397,7 @@ export class FirstPersonPlayer {
 
         const dx = this.playerPos.x - nPos.x;
         const dz = this.playerPos.z - nPos.z;
-        const minR = r + 0.32;
+        const minR = r + 0.34;
         const dSq = dx * dx + dz * dz;
         if (dSq < minR * minR && dSq > 0.0001) {
           const d = Math.sqrt(dSq);
@@ -1458,16 +1468,11 @@ export class FirstPersonPlayer {
     }
   }
 
-  /**
-   * ШАГ 4: Полный контроллер анимаций рук от 1-го лица (idle, ходьба, удар со сжатием кулака,
-   * стрельба, полноценная перезарядка магазина пистолета) + анти-залипание в предметах!
-   */
   _updateViewmodelAnimation(dt) {
     const t = performance.now() * 0.001;
     const speed = Math.hypot(this.velX, this.velZ);
     const walkAmp = Math.min(1, speed / 5.5);
 
-    // 1. Защита от залипания рук в предметах (проверка дистанции до ближайшего объекта перед камерой)
     let targetRetract = 0;
     if (this.hoveredTarget && this.hoveredTarget.distance < 0.92 && !this.heldTarget) {
       targetRetract = (0.92 - this.hoveredTarget.distance) * 0.24;
@@ -1475,7 +1480,6 @@ export class FirstPersonPlayer {
     this.wallRetractZ += (targetRetract - this.wallRetractZ) * Math.min(1, dt * 14);
     this.rigRoot.position.z = this.wallRetractZ;
 
-    // 2. Дыхание в покое (IDLE) + качание при ходьбе (WALK)
     const idleBreathY = Math.sin(t * 2.2) * 0.007;
     const idleBreathX = Math.cos(t * 1.1) * 0.005;
     const walkSwayX = Math.cos(this.walkBobTimer * 0.5) * 0.026 * walkAmp;
@@ -1488,7 +1492,6 @@ export class FirstPersonPlayer {
     const isHoldingHands = Boolean(this.heldTarget && this.heldTarget.mode === 'hands');
 
     if (isHoldingHands) {
-      // Руки аккуратно поддерживают предмет с боков, не залипая внутри него
       this.leftArm.position.set(-0.21 + swayX, -0.18 + swayY, -0.34);
       this.leftArm.rotation.set(0.28, -0.26, 0.14);
       this.rightArm.position.set(0.21 + swayX, -0.18 + swayY, -0.34);
@@ -1496,7 +1499,6 @@ export class FirstPersonPlayer {
       this._setArmFingerCurl(this.leftArm, 0.55);
       this._setArmFingerCurl(this.rightArm, 0.55);
     } else if (this.activeSlot === 1) {
-      // Режим Рук: поочерёдные удары левой/правой рукой со сжатием пальцев в кулак
       const hitLeft = this.punchHandAlt === 1 ? swingPhase : 0;
       const hitRight = this.punchHandAlt === 0 ? swingPhase : 0;
 
@@ -1546,27 +1548,22 @@ export class FirstPersonPlayer {
       this._setArmFingerCurl(this.rightArm, 1.15);
 
       if (this.reloadTimer > 0) {
-        // ШАГ 4: Полноценная 3-фазная анимация перезарядки магазина ПМ!
-        const p = 1.0 - this.reloadTimer / this.reloadDuration; // 0 -> 1
-        // Правая рука поворачивает пистолет рукоятью влево-вверх
+        const p = 1.0 - this.reloadTimer / this.reloadDuration;
         const tilt = Math.sin(p * Math.PI);
         this.rightArm.position.set(0.14 + swayX, -0.18 + swayY + tilt * 0.04, -0.28);
         this.rightArm.rotation.set(0.24 + tilt * 0.25, 0.28 * tilt, 0.38 * tilt);
 
         if (p < 0.38) {
-          // Фаза 1: Магазин вынимается вниз, левая рука тянется к рукояти
           const f1 = p / 0.38;
           if (this.pistolMagMesh) this.pistolMagMesh.position.y = -0.012 - f1 * 0.14;
           this.leftArm.position.set(-0.08 + f1 * 0.16, -0.26 - f1 * 0.06, -0.30);
           this.leftArm.rotation.set(0.35, -0.45, 0.22);
         } else if (p < 0.72) {
-          // Фаза 2: Левая рука вставляет новый магазин снизу вверх до щелчка
           const f2 = (p - 0.38) / 0.34;
           if (this.pistolMagMesh) this.pistolMagMesh.position.y = -0.152 + f2 * 0.14;
           this.leftArm.position.set(0.08, -0.32 + f2 * 0.11, -0.30);
           this.leftArm.rotation.set(0.42, -0.52, 0.25);
         } else {
-          // Фаза 3: Левая рука передёргивает затвор сверху
           const f3 = (p - 0.72) / 0.28;
           if (this.pistolMagMesh) this.pistolMagMesh.position.y = -0.012;
           const rackPull = Math.sin(f3 * Math.PI);
@@ -1601,7 +1598,7 @@ export class FirstPersonPlayer {
       if (promptEl) {
         promptEl.classList.remove('hidden');
         if (this.heldTarget.prop) {
-          promptEl.textContent = `В руках: ${this.heldTarget.prop.name} (🔥 Бросить | ❄️ Заморозить)`;
+          promptEl.textContent = `В руках: ${this.heldTarget.prop.name} (УДАР — Бросить | РЕЖИМ — Фиксация)`;
         } else if (this.heldTarget.npc) {
           promptEl.textContent = `Захват: ${this.heldTarget.npc.name} (${this.heldTarget.limb.label})`;
         }
@@ -1623,7 +1620,9 @@ export class FirstPersonPlayer {
       this.lastInspectedNpc = hit.npc;
       promptEl.classList.remove('hidden');
       const limbHp = Math.ceil(hit.limb.hp);
-      const sevStr = hit.limb.severed ? ' [ОТСОЕДИНЕНА]' : ` [${limbHp} HP]`;
+      const woundCount = hit.limb.wounds ? hit.limb.wounds.length : 0;
+      const woundStr = woundCount > 0 ? ` | Ран: ${woundCount}` : '';
+      const sevStr = hit.limb.severed ? ' [ОТСОЕДИНЕНА]' : ` [${limbHp} HP${woundStr}]`;
       promptEl.textContent = `${hit.npc.name} — ${hit.limb.label}${sevStr}`;
       if (crosshair) crosshair.classList.add('active-target');
     } else {
