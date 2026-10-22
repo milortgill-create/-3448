@@ -1140,6 +1140,14 @@ def main():
         ("assets/index.html", game_html_bytes, True),
     ]
 
+    models_dir = os.path.join(PUBLIC_DIR, "models")
+    if os.path.isdir(models_dir):
+        for fname in sorted(os.listdir(models_dir)):
+            if fname.endswith((".glb", ".jpg")):
+                fpath = os.path.join(models_dir, fname)
+                with open(fpath, "rb") as mf:
+                    unsigned_entries.append((f"assets/models/{fname}", mf.read(), True))
+
     apk_out_public = os.path.join(PUBLIC_DIR, "mezhdugorny-gorebox.apk")
     apk_out_dist = os.path.join(DIST_DIR, "mezhdugorny-gorebox.apk")
 

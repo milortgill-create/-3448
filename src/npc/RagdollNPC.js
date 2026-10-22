@@ -1,23 +1,43 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+
+// Кэш скачанных текстур и 3D-модели GoreDoll из GoreBox (/models/goredoll.glb и /models/goredoll_face_*.jpg)
+const _texLoader = new THREE.TextureLoader();
+const _gltfLoader = new GLTFLoader();
+const _downloadedFaceTextures = [
+  _texLoader.load('/models/goredoll_face_1.jpg'),
+  _texLoader.load('/models/goredoll_face_2.jpg'),
+  _texLoader.load('/models/goredoll_face_3.jpg')
+];
+for (const t of _downloadedFaceTextures) {
+  t.colorSpace = THREE.SRGBColorSpace;
+}
+let _cachedGoredollGLB = null;
+_gltfLoader.load(
+  '/models/goredoll.glb',
+  (gltf) => {
+    _cachedGoredollGLB = gltf.scene;
+  },
+  undefined,
+  () => {}
+);
 
 /**
- * RagdollNPC — Точная 3D-модель по эталонному фото + 56 видов и рисунков ран GoreBox + Красная кровь:
- * - Точная геометрия и палитра по фото (блок головы цвета кожи с тонкой коричневой полоской волос сверху,
- *   открытая шея, серая кофта со ступенчатым V-силуэтом и плечевыми блоками, оголённые предплечья,
- *   тёмно-коричневые беспалые перчатки с пальцами, тёмно-серые штаны с просветом между бёдрами,
- *   коричневые ботинки).
- * - Отсутствие самоколлизий между сегментами НПС и коллизий с капсулой игрока: НПС НЕ разваливается
- *   от одного удара и НЕ падает от касания игрока.
- * - Полная система 56 видов ран и 56 уникальных рисунков ран GoreBox (пулевые, ушибленные/гематомы,
- *   рубленые/резаные от лома, взрывные/открытые переломы) с артериальным и венозным кровотечением,
- *   хромотой при ранении ног и потерей точности/оружия при ранении рук.
- * - Ограничения углов сгиба суставов (шея ±45°, плечи ±60°, локти ±90°, колени ±90°) и механика сдачи.
+ * RagdollNPC — Официальная 3D-модель GoreDoll из GoreBox (v16 GB_NewPlayer / Newest_Player):
+ * - Использует скачанные текстуры лиц GoreBox (/models/goredoll_face_1..3.jpg) и 3D-модель /models/goredoll.glb.
+ * - Точная геометрия GoreBox GoreDoll:
+ *   1) Кубическая голова с фирменным лицом GoreBox (прямоугольные белки глаз, квадратная радужка и зрачок с бликом,
+ *      косая L-образная линия носа, зубчатая чёлка сверху и бакенбарды/щетина);
+ *   2) Выделенная шея и треугольный вырез кожи на вороте футболки;
+ *   3) Трёхступенчатый сужающийся книзу тёмно-серый торс (#464244) с наклонными плечевыми блоками и широкими рукавами до локтя;
+ *   4) Оголённые предплечья, чёрные беспалые перчатки (#0d0d11) и отдельные полусогнутые 3D-пальцы с большим пальцем;
+ *   5) Джинсовый таз (#2b4c66 / #3d3f52) с выступающими тазобедренными блоками по бокам, бёдра, голени и ступенчатые чёрные ботинки (#0a0a0d).
  */
 export class RagdollNPC {
   constructor(id, config, scene, world, propsManager, soundManager) {
     this.id = id;
-    this.name = config.name || `Испытуемый-${id}`;
+    this.name = config.name || `GoreDoll-${id}`;
     this.role = config.role || 'Выживший';
     this.personality = config.personality || 'tactical';
     this.hasPistol = Boolean(config.hasPistol);
@@ -35,7 +55,6 @@ export class RagdollNPC {
     this.ragdollTimer = 0;
     this.flinchTimer = 0;
 
-    // Список активных ран НПС (из атласа 56 видов ран GoreBox)
     this.activeWounds = [];
     this.bleedTickTimer = 0;
     this.arterialSpurtTimer = 0;
@@ -61,23 +80,33 @@ export class RagdollNPC {
     this.limbList = [];
     this.joints = [];
 
-    // Фиксированная эталонная палитра точь-в-точь как на присланном фото
+    // Варианты оригинальной палитры GoreBox GoreDoll (как на официальных кадрах GB_NewPlayer.png и Newest_Player.png)
+    const pantsPalette = [0x2b4f6e, 0x3d3f52, 0x334155, 0x273649];
+    const shirtPalette = [0x464244, 0x3f3d40, 0x4d494b, 0x383a3d];
+    const skinPalette = [0xd49976, 0xdba382, 0xc68b68];
+    const hairPalette = [0x3b2316, 0x291810, 0x4a2e1b];
+
+    const pIdx = (id - 1) % pantsPalette.length;
+    const sIdx = (id - 1) % shirtPalette.length;
+    const skIdx = (id - 1) % skinPalette.length;
+
     this.appearance = {
-      skinHex: 0xf3d4b5,
-      neckSkinHex: 0xe4c2a2,
-      hairHex: 0x4b3628,
-      shirtHex: 0x9aa0a6,
-      shirtMidHex: 0x8f959b,
-      shirtWaistHex: 0x83898f,
-      gloveHex: 0x493325,
-      pantsHex: 0x3d4145,
-      pantsDarkHex: 0x32363a,
-      bootShaftHex: 0x5c3e2b,
-      bootToeHex: 0x4a3121,
-      bootSoleHex: 0x2b1c12
+      skinHex: skinPalette[skIdx],
+      neckSkinHex: 0xbf8462,
+      hairHex: hairPalette[skIdx],
+      shirtHex: shirtPalette[sIdx],
+      shirtMidHex: 0x3d393b,
+      shirtWaistHex: 0x353234,
+      gloveHex: 0x0d0d11,
+      pantsHex: pantsPalette[pIdx],
+      pantsDarkHex: 0x243b53,
+      bootShaftHex: 0x0b0b0e,
+      bootToeHex: 0x08080a,
+      bootSoleHex: 0x050507,
+      faceVariant: (id - 1) % 3
     };
 
-    this._buildExactReferenceDoll();
+    this._buildOfficialGoreBoxDoll();
     this._createFloatingLabel();
   }
 
@@ -88,17 +117,143 @@ export class RagdollNPC {
   }
 
   /**
-   * Строит 3D-модель НПС в точь-в-точь по присланному фото:
-   * - Плоское гранёное освещение (flatShading: true)
-   * - Чистый прямоугольный блок головы цвета кожи (#f3d4b5) с тонкой коричневой полоской волос сверху (#4b3628)
-   * - Выделенная шея и V-образный вырез ворота на серой кофте
-   * - Плечевые накладки и ступенчатое сужение серого торса к талии
-   * - Серые рукава до локтя, оголённые предплечья, коричневые беспалые перчатки и пальцы
-   * - Тёмно-серые штаны с чётким разделением бёдер и массивные коричневые ботинки
+   * Создаёт фирменную текстуру лица GoreBox GoreDoll (по скачанным из GoreBox Wiki эталонам
+   * goredoll_face_1..3.jpg + чёткая отрисовка пиксельной чёлки, прямоугольных глаз с бликами и L-носа).
    */
-  _buildExactReferenceDoll() {
+  _createGoreBoxHeadMaterials(skinHex, hairHex, variant = 0) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+
+    const skinColor = '#' + new THREE.Color(skinHex).getHexString();
+    const hairColor = '#' + new THREE.Color(hairHex).getHexString();
+
+    // 1. Базовый тон кожи GoreBox
+    ctx.fillStyle = skinColor;
+    ctx.fillRect(0, 0, 256, 256);
+
+    // Если скачанная текстура лица из GoreBox Wiki уже загружена в браузере — используем её и поверх усиливаем чёткость деталей
+    const dlTex = _downloadedFaceTextures[variant % _downloadedFaceTextures.length];
+    if (dlTex && dlTex.image && dlTex.image.complete && dlTex.image.naturalWidth > 0) {
+      ctx.drawImage(dlTex.image, 0, 0, 256, 256);
+    } else {
+      // Фирменная зубчатая чёлка GoreBox сверху (как на Newest_Player.png / Definition_edition_eyes.jpg)
+      ctx.fillStyle = hairColor;
+      ctx.fillRect(0, 0, 256, 36);
+      const fringeSteps = [
+        [0, 36, 28, 22],
+        [28, 36, 34, 14],
+        [62, 36, 40, 24],
+        [102, 36, 36, 12],
+        [138, 36, 44, 20],
+        [182, 36, 36, 10],
+        [218, 36, 38, 24]
+      ];
+      for (const [fx, fy, fw, fh] of fringeSteps) {
+        ctx.fillRect(fx, fy, fw, fh);
+      }
+
+      // Горизонтальные брови GoreBox
+      ctx.fillStyle = hairColor;
+      ctx.fillRect(36, 82, 68, 8);
+      ctx.fillRect(152, 82, 68, 8);
+
+      // Верхняя складка века
+      ctx.fillStyle = '#6e4735';
+      ctx.fillRect(36, 94, 68, 4);
+      ctx.fillRect(152, 94, 68, 4);
+
+      // Прямоугольные белки глаз GoreBox
+      ctx.fillStyle = '#f5f0f2';
+      ctx.fillRect(36, 98, 68, 26);
+      ctx.fillRect(152, 98, 68, 26);
+
+      // Квадратная радужка (Beaver Brown / Silver Gray / Hunter Green)
+      const irisColors = ['#6b4c3b', '#525862', '#4d6b53'];
+      ctx.fillStyle = irisColors[variant % irisColors.length];
+      ctx.fillRect(58, 98, 26, 24);
+      ctx.fillRect(174, 98, 26, 24);
+
+      // Квадратный чёрный зрачок
+      ctx.fillStyle = '#141417';
+      ctx.fillRect(64, 103, 14, 15);
+      ctx.fillRect(180, 103, 14, 15);
+
+      // Фирменный белый пиксельный блик в левом верхнем углу каждого зрачка (как в GoreBox!)
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(65, 104, 5, 5);
+      ctx.fillRect(181, 104, 5, 5);
+
+      // Фирменный косой L-образный нос GoreBox по центру
+      ctx.strokeStyle = '#7c4f38';
+      ctx.lineWidth = 5;
+      ctx.lineCap = 'square';
+      ctx.beginPath();
+      ctx.moveTo(132, 134);
+      ctx.lineTo(120, 166);
+      ctx.lineTo(129, 169);
+      ctx.stroke();
+
+      // Прямая линия рта GoreBox
+      ctx.fillStyle = '#734530';
+      ctx.fillRect(94, 198, 68, 5);
+
+      // Вариант со щетиной / бородкой (как на goredoll_face_2.jpg и goredoll_face_3.jpg)
+      if (variant === 1) {
+        ctx.fillStyle = hairColor;
+        ctx.fillRect(0, 210, 66, 46);
+        ctx.fillRect(190, 210, 66, 46);
+        ctx.fillRect(0, 232, 256, 24);
+      } else if (variant === 2) {
+        ctx.fillStyle = 'rgba(75, 58, 48, 0.55)';
+        ctx.fillRect(82, 184, 92, 11);
+        ctx.fillRect(42, 214, 172, 42);
+      }
+    }
+
+    const faceTex = new THREE.CanvasTexture(canvas);
+    faceTex.colorSpace = THREE.SRGBColorSpace;
+    faceTex.needsUpdate = true;
+
+    // Если скачанная картинка догрузится чуть позже — обновляем CanvasTexture на лету
+    if (dlTex && dlTex.image && !dlTex.image.complete) {
+      dlTex.image.addEventListener('load', () => {
+        ctx.drawImage(dlTex.image, 0, 0, 256, 256);
+        faceTex.needsUpdate = true;
+      });
+    }
+
+    const sideSkinMat = new THREE.MeshStandardMaterial({
+      color: skinHex,
+      roughness: 0.65,
+      metalness: 0.03,
+      flatShading: true
+    });
+    const topHairMat = new THREE.MeshStandardMaterial({
+      color: hairHex,
+      roughness: 0.82,
+      metalness: 0.02,
+      flatShading: true
+    });
+    const frontFaceMat = new THREE.MeshStandardMaterial({
+      map: faceTex,
+      roughness: 0.62,
+      metalness: 0.03,
+      flatShading: true
+    });
+
+    // Порядок граней BoxGeometry в Three.js: [+X, -X, +Y (верх), -Y (низ), +Z (лицо спереди), -Z (затылок)]
+    return [sideSkinMat, sideSkinMat, topHairMat, sideSkinMat, frontFaceMat, sideSkinMat];
+  }
+
+  /**
+   * Собирает точную 3D-модель GoreDoll из GoreBox (по официальным рендерам GB_NewPlayer.png и Newest_Player.png
+   * и геометрии /models/goredoll.glb).
+   */
+  _buildOfficialGoreBoxDoll() {
     const ap = this.appearance;
-    const flatMat = (hex, rough = 0.72) =>
+    const flatMat = (hex, rough = 0.74) =>
       new THREE.MeshStandardMaterial({
         color: hex,
         roughness: rough,
@@ -107,17 +262,17 @@ export class RagdollNPC {
       });
 
     const skinMat = flatMat(ap.skinHex, 0.62);
-    const neckMat = flatMat(ap.neckSkinHex, 0.65);
-    const hairMat = flatMat(ap.hairHex, 0.82);
-    const shirtMat = flatMat(ap.shirtHex, 0.76);
-    const shirtMidMat = flatMat(ap.shirtMidHex, 0.78);
-    const shirtWaistMat = flatMat(ap.shirtWaistHex, 0.8);
-    const gloveMat = flatMat(ap.gloveHex, 0.7);
-    const pantsMat = flatMat(ap.pantsHex, 0.8);
-    const pantsDarkMat = flatMat(ap.pantsDarkHex, 0.82);
-    const bootShaftMat = flatMat(ap.bootShaftHex, 0.68);
-    const bootToeMat = flatMat(ap.bootToeHex, 0.64);
-    const bootSoleMat = flatMat(ap.bootSoleHex, 0.88);
+    const neckMat = flatMat(ap.neckSkinHex, 0.66);
+    const hairMat = flatMat(ap.hairHex, 0.84);
+    const shirtMat = flatMat(ap.shirtHex, 0.78);
+    const shirtMidMat = flatMat(ap.shirtMidHex, 0.8);
+    const shirtWaistMat = flatMat(ap.shirtWaistHex, 0.82);
+    const gloveMat = flatMat(ap.gloveHex, 0.58);
+    const pantsMat = flatMat(ap.pantsHex, 0.76);
+    const pantsDarkMat = flatMat(ap.pantsDarkHex, 0.8);
+    const bootShaftMat = flatMat(ap.bootShaftHex, 0.52);
+    const bootToeMat = flatMat(ap.bootToeHex, 0.48);
+    const bootSoleMat = flatMat(ap.bootSoleHex, 0.85);
 
     const stumpTex =
       this.propsManager && this.propsManager.textures && this.propsManager.textures.gore
@@ -130,13 +285,13 @@ export class RagdollNPC {
       metalness: 0.06
     });
 
-    // Вспомогательный билдер сегмента:
-    // collisionFilterGroup = 2, collisionFilterMask = 1 -> Сегменты НПС сталкиваются с полом/предметами (группа 1),
-    // но НИКОГДА не сталкиваются друг с другом, поэтому НПС не разваливается изнутри!
-    const createLimbSegment = (key, label, sizeVec, offsetVec, mass, mat, severable = true, maxHp = 120) => {
+    const createLimbSegment = (key, label, sizeVec, offsetVec, mass, matOrArray, severable = true, maxHp = 120) => {
       const group = new THREE.Group();
       const coreGeo = new THREE.BoxGeometry(sizeVec.x, sizeVec.y, sizeVec.z);
-      const coreMesh = new THREE.Mesh(coreGeo, mat.clone());
+      const coreMesh = new THREE.Mesh(
+        coreGeo,
+        Array.isArray(matOrArray) ? matOrArray : matOrArray.clone()
+      );
       coreMesh.castShadow = true;
       coreMesh.receiveShadow = true;
       group.add(coreMesh);
@@ -189,203 +344,229 @@ export class RagdollNPC {
       return limbObj;
     };
 
-    // 1. ГОЛОВА И ШЕЯ (точь-в-точь как на фото: чистый бежевый прямоугольный блок + тонкая коричневая шапочка волос сверху)
+    // 1. ГОЛОВА И ШЕЯ GOREDOLL (с оригинальным лицом GoreBox, зубчатой шапкой волос сверху и бакенбардами)
+    const headMats = this._createGoreBoxHeadMaterials(ap.skinHex, ap.hairHex, ap.faceVariant);
     const head = createLimbSegment(
       'head',
       'Голова',
-      new THREE.Vector3(0.205, 0.255, 0.205),
+      new THREE.Vector3(0.218, 0.248, 0.218),
       new THREE.Vector3(0, 1.56, 0),
       2.2,
-      skinMat,
+      headMats,
       true,
       110
     );
-    const hairTop = new THREE.Mesh(new THREE.BoxGeometry(0.209, 0.024, 0.209), hairMat);
-    hairTop.position.set(0, 0.132, 0);
-    const neckBlock = new THREE.Mesh(new THREE.BoxGeometry(0.102, 0.072, 0.102), neckMat);
-    neckBlock.position.set(0, -0.155, 0);
-    head.mesh.add(hairTop, neckBlock);
+    // Объёмная шапка волос сверху и на висках (как на GB_NewPlayer.png и Newest_Player.png)
+    const hairCrown = new THREE.Mesh(new THREE.BoxGeometry(0.224, 0.036, 0.224), hairMat);
+    hairCrown.position.set(0, 0.122, 0);
+    const hairBack = new THREE.Mesh(new THREE.BoxGeometry(0.222, 0.14, 0.025), hairMat);
+    hairBack.position.set(0, 0.065, -0.102);
+    const sideburnL = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.075, 0.065), hairMat);
+    sideburnL.position.set(-0.106, 0.068, 0.045);
+    const sideburnR = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.075, 0.065), hairMat);
+    sideburnR.position.set(0.106, 0.068, 0.045);
+    // Шея GoreDoll
+    const neckBlock = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.062, 0.076, 8), neckMat);
+    neckBlock.position.set(0, -0.152, 0);
+    head.mesh.add(hairCrown, hairBack, sideburnL, sideburnR, neckBlock);
 
-    // 2. ВЕРХНИЙ ТОРС / ГРУДЬ (ступенчатая серая кофта с плечевыми блоками и V-образным вырезом шеи)
+    // 2. ВЕРХНИЙ ТОРС GOREDOLL (3-ступенчатая V-образная тёмно-серая футболка с наклонными плечевыми блоками и ромбовидным воротом)
     const upperTorso = createLimbSegment(
       'upperTorso',
       'Грудная клетка',
-      new THREE.Vector3(0.31, 0.27, 0.185),
-      new THREE.Vector3(0, 1.25, 0),
+      new THREE.Vector3(0.32, 0.165, 0.195),
+      new THREE.Vector3(0, 1.29, 0),
       8.5,
       shirtMat,
       false,
       220
     );
-    // V-вырез цвета кожи сверху по центру груди
-    const vNeckSkin = new THREE.Mesh(new THREE.BoxGeometry(0.115, 0.048, 0.19), skinMat);
-    vNeckSkin.position.set(0, 0.118, 0.002);
-    // Выступающие плечевые блоки серой кофты слева и справа (как на фото)
-    const shoulderCapL = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.125, 0.178), shirtMat);
-    shoulderCapL.position.set(-0.175, 0.072, 0);
-    const shoulderCapR = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.125, 0.178), shirtMat);
-    shoulderCapR.position.set(0.175, 0.072, 0);
-    // Средняя ступенька торса
-    const chestMidStep = new THREE.Mesh(new THREE.BoxGeometry(0.265, 0.11, 0.176), shirtMidMat);
-    chestMidStep.position.set(0, -0.095, 0);
-    upperTorso.mesh.add(vNeckSkin, shoulderCapL, shoulderCapR, chestMidStep);
+    // Треугольный/ромбовидный вырез кожи на вороте футболки (как на Newest_Player.png)
+    const collarCutout = new THREE.Mesh(new THREE.BoxGeometry(0.095, 0.055, 0.20), neckMat);
+    collarCutout.position.set(0, 0.068, 0.002);
+    collarCutout.rotation.z = Math.PI / 4;
+    // Плечевые трапеции сверху
+    const trapL = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.042, 0.185), shirtMat);
+    trapL.position.set(-0.105, 0.092, 0);
+    const trapR = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.042, 0.185), shirtMat);
+    trapR.position.set(0.105, 0.092, 0);
+    // Наклонные плечевые блоки GoreBox по бокам (повёрнуты под углом, как на скриншотах из игры)
+    const shoulderCapL = new THREE.Mesh(new THREE.BoxGeometry(0.092, 0.125, 0.182), shirtMidMat);
+    shoulderCapL.position.set(-0.182, 0.032, 0);
+    shoulderCapL.rotation.z = 0.24;
+    const shoulderCapR = new THREE.Mesh(new THREE.BoxGeometry(0.092, 0.125, 0.182), shirtMidMat);
+    shoulderCapR.position.set(0.182, 0.032, 0);
+    shoulderCapR.rotation.z = -0.24;
+    // Средняя ступенька грудной клетки (уже верхней)
+    const ribcageStep = new THREE.Mesh(new THREE.BoxGeometry(0.268, 0.135, 0.180), shirtMidMat);
+    ribcageStep.position.set(0, -0.135, 0);
+    upperTorso.mesh.add(collarCutout, trapL, trapR, shoulderCapL, shoulderCapR, ribcageStep);
 
-    // 3. НИЖНИЙ ТОРС И ТАЗ (талиевый блок серой кофты + верх тёмно-серых штанов с просветом)
+    // 3. НИЖНИЙ ТОРС (узкая талия футболки + джинсовый таз с приподнятыми боковыми бедренными блоками)
     const abdomen = createLimbSegment(
       'abdomen',
       'Живот и таз',
-      new THREE.Vector3(0.235, 0.23, 0.165),
-      new THREE.Vector3(0, 0.99, 0),
+      new THREE.Vector3(0.222, 0.145, 0.165),
+      new THREE.Vector3(0, 1.01, 0),
       6.5,
       shirtWaistMat,
       false,
       190
     );
-    // Верхний блок тёмных штанов (пояс и бедренная кокетка)
-    const pelvisPants = new THREE.Mesh(new THREE.BoxGeometry(0.258, 0.115, 0.172), pantsDarkMat);
-    pelvisPants.position.set(0, -0.068, 0);
-    const pelvisHipL = new THREE.Mesh(new THREE.BoxGeometry(0.106, 0.065, 0.168), pantsMat);
-    pelvisHipL.position.set(-0.076, -0.135, 0);
-    const pelvisHipR = new THREE.Mesh(new THREE.BoxGeometry(0.106, 0.065, 0.168), pantsMat);
-    pelvisHipR.position.set(0.076, -0.135, 0);
-    abdomen.mesh.add(pelvisPants, pelvisHipL, pelvisHipR);
+    // Центральный тазовый блок джинсов (опущен чуть ниже боковых бедренных блоков, точь-в-точь как в GoreBox!)
+    const pelvisCenter = new THREE.Mesh(new THREE.BoxGeometry(0.135, 0.135, 0.174), pantsDarkMat);
+    pelvisCenter.position.set(0, -0.115, 0);
+    // Приподнятые боковые тазобедренные блоки джинсов слева и справа
+    const hipBlockL = new THREE.Mesh(new THREE.BoxGeometry(0.112, 0.125, 0.172), pantsMat);
+    hipBlockL.position.set(-0.088, -0.095, 0);
+    const hipBlockR = new THREE.Mesh(new THREE.BoxGeometry(0.112, 0.125, 0.172), pantsMat);
+    hipBlockR.position.set(0.088, -0.095, 0);
+    abdomen.mesh.add(pelvisCenter, hipBlockL, hipBlockR);
 
-    // 4. ПЛЕЧИ И РУКАВА КОФТЫ (upperArmL, upperArmR)
+    // 4. ПЛЕЧИ / РУКАВА ФУТБОЛКИ (широкие рукава под лёгким углом, как на GB_NewPlayer.png)
     const upperArmL = createLimbSegment(
       'upperArmL',
       'Л. Плечо',
-      new THREE.Vector3(0.098, 0.23, 0.098),
-      new THREE.Vector3(-0.245, 1.21, 0),
+      new THREE.Vector3(0.106, 0.235, 0.106),
+      new THREE.Vector3(-0.255, 1.20, 0),
       1.6,
-      shirtMidMat,
+      shirtMat,
       true,
       115
     );
-    const cuffSleeveL = new THREE.Mesh(new THREE.BoxGeometry(0.102, 0.032, 0.102), shirtWaistMat);
-    cuffSleeveL.position.y = -0.105;
-    upperArmL.mesh.add(cuffSleeveL);
+    upperArmL.coreMesh.rotation.z = 0.08;
 
     const upperArmR = createLimbSegment(
       'upperArmR',
       'П. Плечо',
-      new THREE.Vector3(0.098, 0.23, 0.098),
-      new THREE.Vector3(0.245, 1.21, 0),
+      new THREE.Vector3(0.106, 0.235, 0.106),
+      new THREE.Vector3(0.255, 1.20, 0),
       1.6,
-      shirtMidMat,
+      shirtMat,
       true,
       115
     );
-    const cuffSleeveR = new THREE.Mesh(new THREE.BoxGeometry(0.102, 0.032, 0.102), shirtWaistMat);
-    cuffSleeveR.position.y = -0.105;
-    upperArmR.mesh.add(cuffSleeveR);
+    upperArmR.coreMesh.rotation.z = -0.08;
 
-    // 5. ПРЕДПЛЕЧЬЯ + БЕСПАЛЫЕ КОРИЧНЕВЫЕ ПЕРЧАТКИ + ПАЛЬЦЫ (forearmL, forearmR)
-    const addGloveAndFingers = (forearmLimb, isLeft) => {
+    // 5. ПРЕДПЛЕЧЬЯ + ЧЁРНЫЕ БЕСПАЛЫЕ ПЕРЧАТКИ + СОГНУТЫЕ ПАЛЬЦЫ GOREDOLL (как на GB_NewPlayer.png и Newest_Player.png)
+    const addGoreBoxGloveAndCurledFingers = (forearmLimb, isLeft) => {
       const s = isLeft ? -1 : 1;
-      // Коричневая беспалая перчатка
-      const gloveBox = new THREE.Mesh(new THREE.BoxGeometry(0.092, 0.078, 0.092), gloveMat);
-      gloveBox.position.set(0, -0.115, 0);
-      // Выступающие бежевые пальцы
-      const fingersBox = new THREE.Mesh(new THREE.BoxGeometry(0.082, 0.062, 0.078), skinMat);
-      fingersBox.position.set(0, -0.175, 0);
-      // Большой палец сбоку
-      const thumbBase = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.038, 0.035), gloveMat);
-      thumbBase.position.set(s * 0.048, -0.118, 0.024);
-      const thumbTip = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.032, 0.030), skinMat);
-      thumbTip.position.set(s * 0.052, -0.146, 0.028);
-      forearmLimb.mesh.add(gloveBox, fingersBox, thumbBase, thumbTip);
+      // Чёрная беспалая перчатка GoreBox
+      const glovePalm = new THREE.Mesh(new THREE.BoxGeometry(0.094, 0.086, 0.094), gloveMat);
+      glovePalm.position.set(0, -0.118, 0);
+      glovePalm.rotation.z = -s * 0.08;
+
+      // 4 отдельных 3D-пальца телесного цвета, слегка согнутых внутрь ладони (как на скриншотах GoreBox!)
+      for (let f = 0; f < 4; f++) {
+        const fz = (f - 1.5) * 0.021;
+        const fingerProx = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.042, 0.018), skinMat);
+        fingerProx.position.set(s * 0.008, -0.168, fz);
+        fingerProx.rotation.z = -s * 0.22;
+
+        const fingerDist = new THREE.Mesh(new THREE.BoxGeometry(0.020, 0.036, 0.017), skinMat);
+        fingerDist.position.set(-s * 0.006, -0.196, fz);
+        fingerDist.rotation.z = -s * 0.52;
+
+        forearmLimb.mesh.add(fingerProx, fingerDist);
+      }
+
+      // Отдельный 3D большой палец спереди
+      const thumbGlove = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.038, 0.028), gloveMat);
+      thumbGlove.position.set(-s * 0.036, -0.124, 0.038);
+      thumbGlove.rotation.x = 0.28;
+      const thumbTip = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.036, 0.024), skinMat);
+      thumbTip.position.set(-s * 0.038, -0.155, 0.048);
+      thumbTip.rotation.x = 0.18;
+      forearmLimb.mesh.add(glovePalm, thumbGlove, thumbTip);
     };
 
     const forearmL = createLimbSegment(
       'forearmL',
       'Л. Предплечье',
-      new THREE.Vector3(0.086, 0.21, 0.086),
-      new THREE.Vector3(-0.245, 0.94, 0),
+      new THREE.Vector3(0.090, 0.215, 0.090),
+      new THREE.Vector3(-0.265, 0.93, 0),
       1.3,
       skinMat,
       true,
       105
     );
-    addGloveAndFingers(forearmL, true);
+    addGoreBoxGloveAndCurledFingers(forearmL, true);
 
     const forearmR = createLimbSegment(
       'forearmR',
       'П. Предплечье',
-      new THREE.Vector3(0.086, 0.21, 0.086),
-      new THREE.Vector3(0.245, 0.94, 0),
+      new THREE.Vector3(0.090, 0.215, 0.090),
+      new THREE.Vector3(0.265, 0.93, 0),
       1.3,
       skinMat,
       true,
       105
     );
-    addGloveAndFingers(forearmR, false);
+    addGoreBoxGloveAndCurledFingers(forearmR, false);
 
-    // 6. БЁДРА С ПРОСВЕТОМ МЕЖДУ НОГАМИ (thighL, thighR)
+    // 6. БЁДРА ДЖИНСОВ С ВЫДЕЛЕННЫМ КОЛЕННЫМ БЛОКОМ (thighL, thighR)
     const thighL = createLimbSegment(
       'thighL',
       'Л. Бедро',
-      new THREE.Vector3(0.104, 0.34, 0.112),
-      new THREE.Vector3(-0.082, 0.66, 0),
+      new THREE.Vector3(0.112, 0.34, 0.118),
+      new THREE.Vector3(-0.088, 0.66, 0),
       2.6,
       pantsMat,
       true,
       130
     );
-    const kneeCapL = new THREE.Mesh(new THREE.BoxGeometry(0.098, 0.055, 0.108), pantsDarkMat);
-    kneeCapL.position.set(0, -0.165, 0);
-    thighL.mesh.add(kneeCapL);
+    const kneeStepL = new THREE.Mesh(new THREE.BoxGeometry(0.104, 0.056, 0.112), pantsDarkMat);
+    kneeStepL.position.set(0, -0.168, 0);
+    thighL.mesh.add(kneeStepL);
 
     const thighR = createLimbSegment(
       'thighR',
       'П. Бедро',
-      new THREE.Vector3(0.104, 0.34, 0.112),
-      new THREE.Vector3(0.082, 0.66, 0),
+      new THREE.Vector3(0.112, 0.34, 0.118),
+      new THREE.Vector3(0.088, 0.66, 0),
       2.6,
       pantsMat,
       true,
       130
     );
-    const kneeCapR = new THREE.Mesh(new THREE.BoxGeometry(0.098, 0.055, 0.108), pantsDarkMat);
-    kneeCapR.position.set(0, -0.165, 0);
-    thighR.mesh.add(kneeCapR);
+    const kneeStepR = new THREE.Mesh(new THREE.BoxGeometry(0.104, 0.056, 0.112), pantsDarkMat);
+    kneeStepR.position.set(0, -0.168, 0);
+    thighR.mesh.add(kneeStepR);
 
-    // 7. ГОЛЕНИ И КОРИЧНЕВЫЕ БОТИНКИ (calfL, calfR)
-    const addBrownBoot = (calfLimb) => {
-      // Голенище коричневого ботинка
-      const bootShaft = new THREE.Mesh(new THREE.BoxGeometry(0.102, 0.095, 0.112), bootShaftMat);
-      bootShaft.position.set(0, -0.11, 0.004);
-      // Массивный носок/нижняя часть ботинка (чуть шире голенища, как на фото)
-      const bootLower = new THREE.Mesh(new THREE.BoxGeometry(0.114, 0.075, 0.165), bootToeMat);
-      bootLower.position.set(0, -0.165, 0.026);
-      // Подошва
-      const bootSole = new THREE.Mesh(new THREE.BoxGeometry(0.118, 0.022, 0.172), bootSoleMat);
-      bootSole.position.set(0, -0.202, 0.026);
+    // 7. ГОЛЕНИ И СТУПЕНЧАТЫЕ ЧЁРНЫЕ БОТИНКИ GOREBOX (calfL, calfR)
+    const addGoreBoxBlackBoot = (calfLimb) => {
+      const bootShaft = new THREE.Mesh(new THREE.BoxGeometry(0.106, 0.096, 0.116), bootShaftMat);
+      bootShaft.position.set(0, -0.112, 0.005);
+      const bootLower = new THREE.Mesh(new THREE.BoxGeometry(0.116, 0.076, 0.175), bootToeMat);
+      bootLower.position.set(0, -0.168, 0.028);
+      const bootSole = new THREE.Mesh(new THREE.BoxGeometry(0.120, 0.024, 0.180), bootSoleMat);
+      bootSole.position.set(0, -0.204, 0.028);
       calfLimb.mesh.add(bootShaft, bootLower, bootSole);
     };
 
     const calfL = createLimbSegment(
       'calfL',
       'Л. Голень',
-      new THREE.Vector3(0.090, 0.28, 0.096),
-      new THREE.Vector3(-0.082, 0.31, 0),
+      new THREE.Vector3(0.096, 0.28, 0.102),
+      new THREE.Vector3(-0.088, 0.31, 0),
       2.0,
-      pantsDarkMat,
+      pantsMat,
       true,
       120
     );
-    addBrownBoot(calfL);
+    addGoreBoxBlackBoot(calfL);
 
     const calfR = createLimbSegment(
       'calfR',
       'П. Голень',
-      new THREE.Vector3(0.090, 0.28, 0.096),
-      new THREE.Vector3(0.082, 0.31, 0),
+      new THREE.Vector3(0.096, 0.28, 0.102),
+      new THREE.Vector3(0.088, 0.31, 0),
       2.0,
-      pantsDarkMat,
+      pantsMat,
       true,
       120
     );
-    addBrownBoot(calfR);
+    addGoreBoxBlackBoot(calfR);
 
     // Оружие в правой руке
     this.weaponMeshGroup = new THREE.Group();
@@ -398,7 +579,7 @@ export class RagdollNPC {
     this.weaponMeshGroup.visible = this.hostileToPlayer;
     forearmR.mesh.add(this.weaponMeshGroup);
 
-    // СУСТАВЫ CONETWIST С ОГРАНИЧЕНИЯМИ УГЛОВ СГИБА (collideConnected: false, чтобы соседние сегменты не толкали друг друга!)
+    // СУСТАВЫ CONETWIST С ОГРАНИЧЕНИЯМИ УГЛОВ СГИБА
     const deg = (d) => (d * Math.PI) / 180;
     const Y_AXIS = new CANNON.Vec3(0, 1, 0);
     const NEG_Y_AXIS = new CANNON.Vec3(0, -1, 0);
@@ -421,20 +602,14 @@ export class RagdollNPC {
       this.joints.push(c);
     };
 
-    // Шея: ±45°
-    linkConeJoint(upperTorso, head, new THREE.Vector3(0, 0.16, 0), new THREE.Vector3(0, -0.15, 0), deg(45), deg(30));
-    // Поясница: ±25°
-    linkConeJoint(upperTorso, abdomen, new THREE.Vector3(0, -0.14, 0), new THREE.Vector3(0, 0.12, 0), deg(25), deg(20));
-    // Плечи: ±60°
-    linkConeJoint(upperTorso, upperArmL, new THREE.Vector3(-0.22, 0.09, 0), new THREE.Vector3(0, 0.12, 0), deg(60), deg(35));
-    linkConeJoint(upperTorso, upperArmR, new THREE.Vector3(0.22, 0.09, 0), new THREE.Vector3(0, 0.12, 0), deg(60), deg(35));
-    // Локти: ±90°
+    linkConeJoint(upperTorso, head, new THREE.Vector3(0, 0.15, 0), new THREE.Vector3(0, -0.15, 0), deg(45), deg(30));
+    linkConeJoint(upperTorso, abdomen, new THREE.Vector3(0, -0.15, 0), new THREE.Vector3(0, 0.12, 0), deg(25), deg(20));
+    linkConeJoint(upperTorso, upperArmL, new THREE.Vector3(-0.23, 0.06, 0), new THREE.Vector3(0, 0.12, 0), deg(60), deg(35));
+    linkConeJoint(upperTorso, upperArmR, new THREE.Vector3(0.23, 0.06, 0), new THREE.Vector3(0, 0.12, 0), deg(60), deg(35));
     linkConeJoint(upperArmL, forearmL, new THREE.Vector3(0, -0.12, 0), new THREE.Vector3(0, 0.11, 0), deg(90), deg(20));
     linkConeJoint(upperArmR, forearmR, new THREE.Vector3(0, -0.12, 0), new THREE.Vector3(0, 0.11, 0), deg(90), deg(20));
-    // Тазобедренные суставы: ±50°
-    linkConeJoint(abdomen, thighL, new THREE.Vector3(-0.082, -0.13, 0), new THREE.Vector3(0, 0.17, 0), deg(50), deg(20));
-    linkConeJoint(abdomen, thighR, new THREE.Vector3(0.082, -0.13, 0), new THREE.Vector3(0, 0.17, 0), deg(50), deg(20));
-    // Колени: ±90°
+    linkConeJoint(abdomen, thighL, new THREE.Vector3(-0.088, -0.14, 0), new THREE.Vector3(0, 0.17, 0), deg(50), deg(20));
+    linkConeJoint(abdomen, thighR, new THREE.Vector3(0.088, -0.14, 0), new THREE.Vector3(0, 0.17, 0), deg(50), deg(20));
     linkConeJoint(thighL, calfL, new THREE.Vector3(0, -0.17, 0), new THREE.Vector3(0, 0.14, 0), deg(90), deg(15));
     linkConeJoint(thighR, calfR, new THREE.Vector3(0, -0.17, 0), new THREE.Vector3(0, 0.14, 0), deg(90), deg(15));
 
@@ -448,11 +623,9 @@ export class RagdollNPC {
         const other = e.body;
         if (!other) return;
 
-        // Игнорируем столкновения с сегментами НПС и с капсулой игрока, чтобы НПС не падал от касания игрока!
         if (other.userData && (other.userData.npc === this || other.userData.type === 'player')) {
           return;
         }
-        // Игнорируем обычное стояние на полу
         if (other.mass === 0 && !this.isRagdoll) {
           return;
         }
@@ -460,7 +633,6 @@ export class RagdollNPC {
         const relVel = e.contact.getImpactVelocityAlongNormal();
         const impactSpeed = Math.abs(relVel);
 
-        // Только очень сильный удар тяжёлым летящим предметом (ящик, бочка, шлакоблок на высокой скорости) наносит урон
         if (impactSpeed > 11.5 && other.mass >= 2.0) {
           const dmg = (impactSpeed - 10.5) * 3.8;
           this.damageLimb(limb, dmg, limb.mesh.position, null, 'blunt', false);
@@ -506,9 +678,6 @@ export class RagdollNPC {
     }
   }
 
-  /**
-   * Выбирает подходящую рану из 56 видов и 56 рисунков ран GoreBox и прикрепляет её 3D-декаль на конечность!
-   */
   _applyGoreBoxWound56(limb, damage, hitPoint, damageType = 'bullet') {
     const goreTex =
       this.propsManager && this.propsManager.textures && this.propsManager.textures.gore
@@ -517,22 +686,15 @@ export class RagdollNPC {
     const atlas = goreTex && goreTex.woundAtlas56 ? goreTex.woundAtlas56 : [];
     if (atlas.length === 0) return null;
 
-    // Подбираем категорию из 56 видов ран:
-    // 0..13 = bullet (14 видов)
-    // 14..27 = blunt (14 видов)
-    // 28..41 = slash (14 видов)
-    // 42..55 = blast (14 видов)
     let startIdx = 0;
     if (damageType === 'bullet') startIdx = 0;
     else if (damageType === 'blunt') startIdx = 14;
     else if (damageType === 'slash') startIdx = 28;
     else if (damageType === 'blast') startIdx = 42;
 
-    // Учитываем тяжесть урона и существующие раны, чтобы открывать все 14 подвидов внутри категории
     const severityOffset = Math.min(13, Math.floor((damage / 38) * 7) + (this.activeWounds.length % 8));
     const woundDef = atlas[startIdx + severityOffset] || atlas[0];
 
-    // 1. Создаём 3D-декаль с уникальным рисунком этой раны непосредственно на повреждённом сегменте тела
     const decalSize = Math.min(limb.size.x * 0.92, 0.085 + Math.min(0.065, damage * 0.0014));
     const woundMat = new THREE.MeshBasicMaterial({
       map: woundDef.texture,
@@ -546,7 +708,6 @@ export class RagdollNPC {
     const decalGeo = new THREE.PlaneGeometry(decalSize, decalSize);
     const decalMesh = new THREE.Mesh(decalGeo, woundMat);
 
-    // Размещаем на передней/боковой грани конечности в точке попадания
     const localY = hitPoint
       ? Math.max(-limb.size.y * 0.36, Math.min(limb.size.y * 0.36, hitPoint.y - limb.mesh.position.y))
       : (Math.random() - 0.5) * limb.size.y * 0.5;
@@ -558,7 +719,6 @@ export class RagdollNPC {
     decalMesh.rotation.z = (Math.random() - 0.5) * 0.5;
     limb.mesh.add(decalMesh);
 
-    // Если рана глубокая (резаная, пулевая крупная или взрывная) — добавляем объёмный 3D-слой обнажённой красной ткани/кости
     if (woundDef.bleedRate >= 1.8) {
       const cavityMesh = new THREE.Mesh(
         new THREE.BoxGeometry(decalSize * 0.42, decalSize * 0.28, 0.012),
@@ -571,7 +731,6 @@ export class RagdollNPC {
       limb.mesh.add(cavityMesh);
     }
 
-    // 2. Регистрируем рану и её механики (кровотечение, артериальный выброс, хромота, штраф к точности)
     limb.bleeding = limb.bleeding || woundDef.bleedRate >= 0.8;
     limb.arterial = limb.arterial || woundDef.arterial;
 
@@ -592,7 +751,6 @@ export class RagdollNPC {
       this.activeWounds.pop();
     }
 
-    // Пересчитываем механические эффекты ран (хромота при ранении ног, дрожь прицела при ранении рук)
     if (limb.key === 'thighL' || limb.key === 'calfL' || limb.key === 'thighR' || limb.key === 'calfR') {
       this.limpFactor = Math.min(1.0, this.limpFactor + 0.28);
     }
@@ -607,10 +765,6 @@ export class RagdollNPC {
     return woundEntry;
   }
 
-  /**
-   * Наносит урон конкретной части тела, создаёт рану из 56 видов и брызги красной крови.
-   * НПС НЕ разваливается от одного удара!
-   */
   damageLimb(limb, amount, hitPoint, impulseVec = null, damageType = 'bullet', byPlayer = false) {
     if (!limb) return;
 
@@ -621,10 +775,8 @@ export class RagdollNPC {
 
     const fxPos = hitPoint ? hitPoint.clone() : limb.mesh.position.clone();
 
-    // 1. Применяем рану из 56 видов и рисунков ран GoreBox
     const appliedWound = this._applyGoreBoxWound56(limb, amount, fxPos, damageType);
 
-    // 2. Красные брызги крови и красная лужа на полу
     this.propsManager.spawnBloodSplatter(
       fxPos,
       damageType === 'bullet' || damageType === 'blast' ? 20 : 12,
@@ -637,8 +789,6 @@ export class RagdollNPC {
     this.sound.playFleshHit();
     this.sound.playNpcVocal(this.id, this.hp <= 0 ? 'critical' : 'pain');
 
-    // 3. Отсоединение конечности происходит ТОЛЬКО при полном разрушении сегмента (limb.hp <= 0)
-    // И мощном рубящем/взрывном/крупнокалиберном воздействии (а не от одного лёгкого удара!)
     if (
       limb.severable &&
       !limb.severed &&
@@ -652,18 +802,15 @@ export class RagdollNPC {
       this.onWitnessPlayerViolence(fxPos, true);
     }
 
-    // 4. Проверка критического состояния
     if (this.hp <= 0 && !this.dead) {
       this.die(impulseVec);
       return;
     }
 
-    // При низком здоровье (<= 35 HP) НПС сдаётся и поднимает руки вверх
     if (!this.dead && this.hp <= 35 && this.personality !== 'dummy') {
       this._enterSurrenderState();
     }
 
-    // В регдолл падает только от взрыва, сильного удара по ногам или тяжёлого нокдауна (НЕ от одного обычного удара рукой)
     if (!this.dead) {
       const bothLegsCrippled =
         (this.limbs.thighL.hp < 25 || this.limbs.calfL.hp < 25) &&
@@ -690,9 +837,6 @@ export class RagdollNPC {
     this.setEmotion('SURRENDER', 'СДАЁТСЯ (Руки вверх)');
   }
 
-  /**
-   * Отсоединяет сегмент конечности с открытием красного среза (мышцы + кость) и фонтаном красной крови.
-   */
   severLimb(limb, impulseVec = null) {
     if (!limb || !limb.severable || limb.severed) return;
     limb.severed = true;
@@ -875,9 +1019,6 @@ export class RagdollNPC {
     return t ? t.mesh.position.clone() : this.basePos.clone();
   }
 
-  /**
-   * Обрабатывает активное кровотечение из ран (венозные капли и пульсирующие артериальные выбросы красной крови).
-   */
   _updateWoundBleeding(dt) {
     if (this.activeWounds.length === 0) return;
 
@@ -893,7 +1034,6 @@ export class RagdollNPC {
       }
     }
 
-    // Пульсирующий артериальный выброс красной крови каждые 0.55 сек
     if (arterialLimbs.length > 0 && !this.dead) {
       this.arterialSpurtTimer += dt;
       if (this.arterialSpurtTimer >= 0.55) {
@@ -909,7 +1049,6 @@ export class RagdollNPC {
       }
     }
 
-    // Венозное капание и потеря здоровья от кровопотери каждые 1.4 сек
     if (totalBleed > 0 && !this.dead) {
       this.bleedTickTimer += dt;
       if (this.bleedTickTimer >= 1.4) {
@@ -1113,7 +1252,6 @@ export class RagdollNPC {
 
     this.targetYaw = Math.atan2(dir.x, dir.z);
 
-    // Хромота при ранении ног снижает скорость передвижения (как в GoreBox)
     const effectiveSpeed = speed * (1.0 - this.limpFactor * 0.45);
     this.basePos.x += dir.x * effectiveSpeed * dt;
     this.basePos.z += dir.z * effectiveSpeed * dt;
@@ -1234,11 +1372,11 @@ export class RagdollNPC {
       const targetQuat = yawQuat.clone().multiply(localQuat);
 
       limb.body.position.set(
-         THREE.MathUtils.lerp(limb.body.position.x, targetPos.x, Math.min(1, dt * 18)),
+        THREE.MathUtils.lerp(limb.body.position.x, targetPos.x, Math.min(1, dt * 18)),
         THREE.MathUtils.lerp(limb.body.position.y, targetPos.y, Math.min(1, dt * 18)),
         THREE.MathUtils.lerp(limb.body.position.z, targetPos.z, Math.min(1, dt * 18))
       );
-      limb.body. velocity.set(0, 0, 0);
+      limb.body.velocity.set(0, 0, 0);
       limb.body.angularVelocity.set(0, 0, 0);
       limb.body.quaternion.set(targetQuat.x, targetQuat.y, targetQuat.z, targetQuat.w);
     }
