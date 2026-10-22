@@ -2,13 +2,13 @@ import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 
 /**
- * GoreBox Goredoll Active-Ragdoll NPC with:
- * - Authentic Goredoll 3D blocky proportions matching reference photo
- * - Dynamic Animated Canvas Face with 6 Emotions (CALM, CURIOUS, FEAR, ANGRY, PAIN, DEAD), eye blinking & pupil tracking
- * - True Bipedal Kinematic Stride Animation (real lifting feet & swinging knees/hips — zero magical dragging)
- * - GoreBox 3D Textured Wounds (bullet holes, slashes, recessed flesh cavities)
- * - Full Limb Dismemberment & Severing with protruding white Bone (Костная ткань), Viscera (Внутренности), and Arterial Blood Flow
- * - Tactical AI: Walk -> Stop & Look Around -> Fear/Shock when player shoots an NPC -> Retaliate (Armed Counter-Attack!)
+ * Обновлённый НПС (ШАГ 1 – ШАГ 5):
+ * - ШАГ 1: 3D-модель строго по пропорциям манекена с первого фото (серая кофта с плечиками и сужением торса,
+ *   тёмные штаны, коричневые ботинки, сохранённое лицо со старой модели + система рандома одежды, тона кожи и лица при перезапуске).
+ * - ШАГ 2: Внутренние текстуры и декали повреждений из пула 40 вариантов (без красной лужи на полу).
+ * - ШАГ 3: Голосовая система из пула 10 различных звуков (крики, стоны от боли, звуки при уроне и сдаче).
+ * - ШАГ 5: Физика Ragdoll при переходе в состояние «обездвижен», угловые ограничения суставов
+ *   (шея ±45°, плечи ±60°, локти ±90°, колени ±90°) и механика сдачи (поднимает руки вверх при низком здоровье).
  */
 export class RagdollNPC {
   constructor(id, config, scene, world, propsManager, soundManager) {
@@ -26,15 +26,13 @@ export class RagdollNPC {
 
     this.maxHp = 100;
     this.hp = 100;
-    this.dead = false;
+    this.dead = false; // Внутренний флаг состояния «обездвижен»
 
     // Ragdoll & posture state
     this.isRagdoll = false;
     this.ragdollTimer = 0;
-    this.recovering = false;
-    this.recoverProgress = 0;
 
-    // Ground position & orientation for true bipedal walking
+    // Ground position & orientation for bipedal walking
     this.groundPos = (config.position || new THREE.Vector3(0, 0, 0)).clone();
     this.groundPos.y = 0;
     this.facingYaw = config.yaw || 0;
@@ -46,74 +44,119 @@ export class RagdollNPC {
     this.targetHeadPitch = 0;
 
     // AI State Machine:
-    // 'WALK_PATROL' | 'STOP_LOOK' | 'INSPECT_PROP' | 'FEAR_SHOCK' | 'RETALIATE' | 'CRAWL_AGONY' | 'IDLE_DUMMY'
+    // 'WALK_PATROL' | 'STOP_LOOK' | 'INSPECT_PROP' | 'FEAR_SHOCK' | 'RETALIATE' | 'SURRENDER' | 'CRAWL_AGONY' | 'IDLE_DUMMY'
     this.aiState = this.personality === 'dummy' ? 'IDLE_DUMMY' : 'STOP_LOOK';
     this.stateTimer = 2.0 + Math.random() * 2.0;
     this.lookSubTimer = 0;
     this.targetPoint = this.groundPos.clone();
     this.dangerSourcePos = null;
     this.hostileToPlayer = this.personality === 'hostile';
+    this.surrendered = false;
     this.attackCooldown = 0;
     this.meleeSwingTimer = 0;
     this.strafeDir = Math.random() > 0.5 ? 1 : -1;
     this.strafeTimer = 1.5;
 
-    // Face Emotion & Animation State
-    this.emotion = 'CALM'; // 'CALM' | 'CURIOUS' | 'FEAR' | 'ANGRY' | 'PAIN' | 'DEAD'
+    // Face Emotion & Animation State (Лицо со старой модели + пул вариаций)
+    this.emotion = 'CALM';
     this.emotionLockTimer = 0;
     this.blinkTimer = 2.2 + Math.random() * 2.5;
     this.isBlinking = false;
     this.eyeLookX = 0;
     this.eyeLookY = 0;
-    this.faceBloodSplats = [];
+    this.faceDamageMarks = [];
 
-    // Physics & Gore collections
+    // Physics & Decal collections
     this.limbs = {};
     this.limbList = [];
     this.constraints = [];
-    this.bloodParticles = [];
-    this.stumpEmitters = []; // Continuous arterial blood fountains from severed limbs/wounds
+    this.impactParticles = [];
+    this.stumpEmitters = [];
     this.muzzleFlashTimer = 0;
 
+    // ШАГ 1: Генерируем рандомный пресет внешности (тон кожи, оттенки серой кофты/штанов/ботинок и вариант лица)
+    this.appearance = this._generateRandomAppearance(config.isFirstSpawn && id === 1);
     this._initMaterials();
     this._initFaceCanvas();
     this._buildArticulatedBody(this.groundPos);
     this._createDOMLabel();
   }
 
+  /**
+   * ШАГ 1: Система рандома внешности при каждом перезапуске игры (тон кожи, цвет одежды и вариант лица из пула).
+   */
+  _generateRandomAppearance(useCanonicalRef = false) {
+    const skinPool = ['#f2d2b6', '#f6dbc2', '#eac19e', '#dfb28d', '#d6a47e'];
+    const hairPool = ['#483126', '#2d1e16', '#5a3e30', '#221813', '#694b3a'];
+    // Серая кофта (вариации серого/графитового/серо-оливкового при перезапуске)
+    const sweaterPool = [
+      { chest: 0x989ea5, shoulder: 0xa3a9b0, mid: 0x8f959c, waist: 0x858b92 },
+      { chest: 0x848c94, shoulder: 0x9199a1, mid: 0x798189, waist: 0x6e767e },
+      { chest: 0xa4aab2, shoulder: 0xafb5bd, mid: 0x989ea6, waist: 0x8d939b },
+      { chest: 0x737b84, shoulder: 0x7f8892, mid: 0x687079, waist: 0x5d656e },
+      { chest: 0x8c9288, shoulder: 0x979e93, mid: 0x80867c, waist: 0x747a70 }
+    ];
+    // Тёмные штаны
+    const pantsPool = [0x44494f, 0x363b40, 0x2d3238, 0x4c5259, 0x3b4046];
+    // Коричневые ботинки
+    const bootPool = [0x583e31, 0x4b3327, 0x664839, 0x3f2b20, 0x52392c];
+
+    if (useCanonicalRef) {
+      return {
+        skinHex: '#f2d2b6',
+        hairHex: '#483126',
+        sweater: sweaterPool[0],
+        pantsHex: 0x44494f,
+        bootHex: 0x583e31,
+        faceVariant: 0
+      };
+    }
+
+    return {
+      skinHex: skinPool[Math.floor(Math.random() * skinPool.length)],
+      hairHex: hairPool[Math.floor(Math.random() * hairPool.length)],
+      sweater: sweaterPool[Math.floor(Math.random() * sweaterPool.length)],
+      pantsHex: pantsPool[Math.floor(Math.random() * pantsPool.length)],
+      bootHex: bootPool[Math.floor(Math.random() * bootPool.length)],
+      faceVariant: Math.floor(Math.random() * 6) // 6 вариантов деталей лица на базе старой текстуры лица
+    };
+  }
+
   _initMaterials() {
+    const app = this.appearance;
+
     this.skinMat = new THREE.MeshStandardMaterial({
-      color: 0xf2d2b6,
+      color: new THREE.Color(app.skinHex),
       roughness: 0.58,
       metalness: 0.03
     });
 
     this.hairMat = new THREE.MeshStandardMaterial({
-      color: 0x483126,
+      color: new THREE.Color(app.hairHex),
       roughness: 0.85,
       metalness: 0.02
     });
 
     this.shirtChestMat = new THREE.MeshStandardMaterial({
-      color: 0x989ea5,
+      color: app.sweater.chest,
       roughness: 0.76,
       metalness: 0.04
     });
 
     this.shirtShoulderMat = new THREE.MeshStandardMaterial({
-      color: 0xa1a7ae,
+      color: app.sweater.shoulder,
       roughness: 0.74,
       metalness: 0.04
     });
 
     this.shirtMidMat = new THREE.MeshStandardMaterial({
-      color: 0x90969d,
+      color: app.sweater.mid,
       roughness: 0.78,
       metalness: 0.04
     });
 
     this.shirtWaistMat = new THREE.MeshStandardMaterial({
-      color: 0x888e95,
+      color: app.sweater.waist,
       roughness: 0.8,
       metalness: 0.04
     });
@@ -125,13 +168,13 @@ export class RagdollNPC {
     });
 
     this.pantsMat = new THREE.MeshStandardMaterial({
-      color: 0x44494f,
+      color: app.pantsHex,
       roughness: 0.82,
       metalness: 0.05
     });
 
     this.bootMat = new THREE.MeshStandardMaterial({
-      color: 0x583e31,
+      color: app.bootHex,
       roughness: 0.65,
       metalness: 0.08
     });
@@ -142,35 +185,23 @@ export class RagdollNPC {
       metalness: 0.05
     });
 
-    // Gore materials (Bone, Viscera, Muscle Cross-Section)
-    this.goreCrossMat = new THREE.MeshStandardMaterial({
+    // Внутренние текстуры соединений сегментов
+    this.internalCrossMat = new THREE.MeshStandardMaterial({
       map: this.goreTextures ? this.goreTextures.goreCrossSection : null,
-      color: 0xdc2626,
-      roughness: 0.35,
+      color: 0x5c1d24,
+      roughness: 0.42,
       metalness: 0.08
     });
 
     this.boneMat = new THREE.MeshStandardMaterial({
-      color: 0xf1f5f9,
-      roughness: 0.42,
+      color: 0xe2e8f0,
+      roughness: 0.45,
       metalness: 0.05
-    });
-
-    this.marrowMat = new THREE.MeshBasicMaterial({
-      color: 0x881337
-    });
-
-    this.visceraMat = new THREE.MeshStandardMaterial({
-      color: 0x991b1b,
-      emissive: 0x2a0408,
-      emissiveIntensity: 0.35,
-      roughness: 0.22,
-      metalness: 0.12
     });
   }
 
   /**
-   * Creates a live 256x256 CanvasTexture for the Goredoll's animated face.
+   * ШАГ 1: Лицо со старой модели с поддержкой пула вариаций и эмоций.
    */
   _initFaceCanvas() {
     this.faceCanvas = document.createElement('canvas');
@@ -208,14 +239,29 @@ export class RagdollNPC {
     const ctx = this.faceCtx;
     if (!ctx) return;
 
-    // 1. Base Goredoll peach skin
-    ctx.fillStyle = '#f2d2b6';
+    const fv = this.appearance ? this.appearance.faceVariant : 0;
+
+    // 1. Тон кожи из рандомного пула
+    ctx.fillStyle = this.appearance ? this.appearance.skinHex : '#f2d2b6';
     ctx.fillRect(0, 0, 256, 256);
 
-    // Subtle blocky nose bridge shadow in the center
-    ctx.fillStyle = 'rgba(186, 138, 104, 0.42)';
+    // Вариативные детали лица из пула (щетина, скулы, шрам на брови)
+    if (fv === 1 || fv === 4) {
+      ctx.fillStyle = 'rgba(60, 42, 32, 0.14)';
+      ctx.fillRect(68, 158, 120, 62);
+    } else if (fv === 2) {
+      ctx.strokeStyle = 'rgba(120, 75, 55, 0.45)';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(168, 62);
+      ctx.lineTo(178, 92);
+      ctx.stroke();
+    }
+
+    // Блочная переносица (как на старом лице)
+    ctx.fillStyle = 'rgba(176, 128, 94, 0.42)';
     ctx.fillRect(118, 110, 20, 38);
-    ctx.fillStyle = 'rgba(156, 108, 78, 0.45)';
+    ctx.fillStyle = 'rgba(146, 98, 68, 0.45)';
     ctx.fillRect(116, 142, 8, 6);
     ctx.fillRect(132, 142, 8, 6);
 
@@ -223,10 +269,11 @@ export class RagdollNPC {
     const lx = Math.max(-10, Math.min(10, this.eyeLookX * 10));
     const ly = Math.max(-6, Math.min(6, this.eyeLookY * 6));
 
-    // 2. Draw Left & Right Eyes (x = 76, 180; y = 104)
+    const eyeColors = ['#1f2937', '#1e3a8a', '#14532d', '#3f2b21', '#312e81', '#111827'];
+    const pupilColor = eyeColors[fv % eyeColors.length];
+
     const drawEye = (cx, cy, isLeft) => {
       if (em === 'DEAD') {
-        // X-shaped dead eyes
         ctx.strokeStyle = '#291811';
         ctx.lineWidth = 7;
         ctx.beginPath();
@@ -239,7 +286,6 @@ export class RagdollNPC {
       }
 
       if (this.isBlinking || (em === 'PAIN' && isLeft)) {
-        // Closed wincing/blinking eyelid line
         ctx.strokeStyle = '#2b1911';
         ctx.lineWidth = 7;
         ctx.beginPath();
@@ -255,7 +301,6 @@ export class RagdollNPC {
         return;
       }
 
-      // Eye sclera (white)
       const eyeH = em === 'FEAR' ? 34 : em === 'ANGRY' ? 20 : 24;
       const eyeW = em === 'FEAR' ? 38 : 34;
       ctx.fillStyle = '#f8fafc';
@@ -264,12 +309,10 @@ export class RagdollNPC {
       ctx.lineWidth = 3;
       ctx.strokeRect(cx - eyeW / 2, cy - eyeH / 2, eyeW, eyeH);
 
-      // Pupil (constricted when terrified, sharp when angry)
       const pSize = em === 'FEAR' ? 9 : 13;
-      ctx.fillStyle = em === 'ANGRY' ? '#1e1b18' : '#1f2937';
+      ctx.fillStyle = pupilColor;
       ctx.fillRect(cx + lx - pSize / 2, cy + ly - pSize / 2, pSize, pSize);
 
-      // Tiny eye glint
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(cx + lx - pSize / 2 + 2, cy + ly - pSize / 2 + 2, 4, 4);
     };
@@ -277,13 +320,12 @@ export class RagdollNPC {
     drawEye(76, 104, true);
     drawEye(180, 104, false);
 
-    // 3. Draw Eyebrows based on Emotion
-    ctx.strokeStyle = '#3a241a';
-    ctx.lineWidth = 9;
+    // Брови
+    ctx.strokeStyle = this.appearance ? this.appearance.hairHex : '#3a241a';
+    ctx.lineWidth = 8 + (fv % 3);
     ctx.lineCap = 'square';
 
     if (em === 'ANGRY') {
-      // Deep V-slanted furious brows
       ctx.beginPath();
       ctx.moveTo(52, 74);
       ctx.lineTo(100, 88);
@@ -291,7 +333,6 @@ export class RagdollNPC {
       ctx.lineTo(156, 88);
       ctx.stroke();
     } else if (em === 'FEAR') {
-      // High arched worried/shocked brows
       ctx.beginPath();
       ctx.moveTo(52, 82);
       ctx.lineTo(98, 66);
@@ -299,11 +340,9 @@ export class RagdollNPC {
       ctx.lineTo(158, 66);
       ctx.stroke();
 
-      // Cold sweat droplet on temple
       ctx.fillStyle = '#bae6fd';
       ctx.fillRect(214, 92, 8, 16);
     } else if (em === 'CURIOUS') {
-      // One eyebrow raised inquisitive look
       ctx.beginPath();
       ctx.moveTo(54, 82);
       ctx.lineTo(98, 82);
@@ -318,7 +357,6 @@ export class RagdollNPC {
       ctx.lineTo(158, 74);
       ctx.stroke();
     } else {
-      // Calm neutral brows
       ctx.beginPath();
       ctx.moveTo(54, 80);
       ctx.lineTo(98, 80);
@@ -327,18 +365,14 @@ export class RagdollNPC {
       ctx.stroke();
     }
 
-    // 4. Draw Mouth based on Emotion
+    // Рот
     if (em === 'FEAR') {
-      // Wide open screaming/gasping blocky mouth
-      ctx.fillStyle = '#2a080c';
-      ctx.fillRect(92, 168, 72, 36);
+      ctx.fillStyle = '#261416';
+      ctx.fillRect(92, 168, 72, 34);
       ctx.fillStyle = '#f8fafc';
-      ctx.fillRect(96, 170, 64, 8); // Upper teeth
-      ctx.fillStyle = '#be123c';
-      ctx.fillRect(108, 190, 40, 12); // Tongue
+      ctx.fillRect(96, 170, 64, 8);
     } else if (em === 'ANGRY') {
-      // Clenched gritted teeth snarl
-      ctx.fillStyle = '#2a080c';
+      ctx.fillStyle = '#261416';
       ctx.fillRect(88, 172, 80, 22);
       ctx.fillStyle = '#f1f5f9';
       ctx.fillRect(92, 175, 72, 16);
@@ -347,37 +381,26 @@ export class RagdollNPC {
       ctx.beginPath();
       ctx.moveTo(92, 183);
       ctx.lineTo(164, 183);
-      for (let tx = 106; tx <= 150; tx += 14) {
-        ctx.moveTo(tx, 175);
-        ctx.lineTo(tx, 191);
-      }
       ctx.stroke();
     } else if (em === 'PAIN') {
-      // Jagged grimace/groan
-      ctx.fillStyle = '#3b070b';
-      ctx.fillRect(86, 168, 84, 30);
+      ctx.fillStyle = '#261416';
+      ctx.fillRect(86, 168, 84, 28);
       ctx.fillStyle = '#f8fafc';
       ctx.fillRect(92, 171, 72, 9);
-      ctx.fillStyle = '#991b1b';
-      ctx.fillRect(145, 198, 10, 26); // Blood drip from corner of mouth
     } else if (em === 'DEAD') {
-      // Slack open mouth with blood trickle
-      ctx.fillStyle = '#271214';
-      ctx.fillRect(100, 174, 56, 20);
-      ctx.fillStyle = '#991b1b';
-      ctx.fillRect(136, 188, 12, 42);
+      ctx.fillStyle = '#271a1c';
+      ctx.fillRect(100, 174, 56, 18);
     } else if (em === 'CURIOUS') {
       ctx.fillStyle = '#4a2c20';
       ctx.fillRect(110, 176, 36, 10);
     } else {
-      // Calm neutral mouth line
       ctx.fillStyle = '#4a2c20';
       ctx.fillRect(98, 178, 60, 7);
     }
 
-    // 5. Persistent facial blood splatters from wounds/impacts
-    for (const sp of this.faceBloodSplats) {
-      ctx.fillStyle = sp.dark ? 'rgba(105, 14, 18, 0.9)' : 'rgba(185, 28, 28, 0.85)';
+    // Декали повреждений на лице
+    for (const sp of this.faceDamageMarks) {
+      ctx.fillStyle = 'rgba(30, 24, 26, 0.72)';
       ctx.beginPath();
       ctx.arc(sp.x, sp.y, sp.r, 0, Math.PI * 2);
       ctx.fill();
@@ -386,6 +409,11 @@ export class RagdollNPC {
     this.faceTexture.needsUpdate = true;
   }
 
+  /**
+   * ШАГ 1 + ШАГ 5: Сборка 3D-модели манекена по пропорциям с первого фото +
+   * физические суставы CANNON.ConeTwistConstraint с точными ограничениями углов:
+   * шея ±45°, плечи ±60°, локти ±90°, колени ±90°.
+   */
   _buildArticulatedBody(origin) {
     const createLimb = (key, label, w, h, d, x, y, z, mass, mat, maxLimbHp = 45, severable = true) => {
       const group = new THREE.Group();
@@ -454,72 +482,76 @@ export class RagdollNPC {
     const ox = origin.x;
     const oz = origin.z;
 
-    // 1. Pelvis / Waist
-    const pelvis = createLimb('pelvis', 'Таз', 0.28, 0.16, 0.19, ox, 0.90, oz, 8, this.shirtWaistMat, 120, false);
+    // 1. Pelvis / Тазовый блок штанов с нижней узкой секцией серой кофты (как на референс-фото)
+    const pelvis = createLimb('pelvis', 'Таз', 0.30, 0.14, 0.19, ox, 0.89, oz, 8, this.pantsMat, 120, false);
+    const waistSweaterBlock = new THREE.Mesh(new THREE.BoxGeometry(0.235, 0.09, 0.175), this.shirtWaistMat);
+    waistSweaterBlock.position.set(0, 0.09, 0);
+    pelvis.mesh.add(waistSweaterBlock);
 
-    // 2. Abdomen
-    const abdomen = createLimb('abdomen', 'Живот', 0.30, 0.18, 0.20, ox, 1.07, oz, 8, this.shirtMidMat, 90, false);
-    const seamBelt = new THREE.Mesh(
-      new THREE.BoxGeometry(0.306, 0.015, 0.206),
-      new THREE.MeshStandardMaterial({ color: 0x6f757c, roughness: 0.9 })
+    // 2. Abdomen / Средняя секция серой кофты (сужающаяся книзу ступенька)
+    const abdomen = createLimb('abdomen', 'Живот', 0.275, 0.19, 0.188, ox, 1.07, oz, 8, this.shirtMidMat, 90, false);
+    const stepShadow = new THREE.Mesh(
+      new THREE.BoxGeometry(0.28, 0.016, 0.192),
+      new THREE.MeshStandardMaterial({ color: 0x686e75, roughness: 0.9 })
     );
-    seamBelt.position.y = -0.08;
-    abdomen.mesh.add(seamBelt);
+    stepShadow.position.y = 0.088;
+    abdomen.mesh.add(stepShadow);
 
-    // 3. Upper Torso / Chest
-    const upperTorso = createLimb('upperTorso', 'Грудная клетка', 0.36, 0.28, 0.22, ox, 1.30, oz, 11, this.shirtChestMat, 110, false);
-    const shCapL = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.13, 0.21), this.shirtShoulderMat);
-    shCapL.position.set(-0.20, 0.07, 0);
-    const shCapR = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.13, 0.21), this.shirtShoulderMat);
-    shCapR.position.set(0.20, 0.07, 0);
-    const collarSkin = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.04, 0.226), this.skinMat);
-    collarSkin.position.set(0, 0.125, 0);
+    // 3. Upper Torso / Широкая грудная клетка с угловатыми наплечниками и трапециевидным вырезом шеи (как на фото)
+    const upperTorso = createLimb('upperTorso', 'Грудная клетка', 0.35, 0.25, 0.21, ox, 1.30, oz, 11, this.shirtChestMat, 110, false);
+    const shCapL = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.155, 0.202), this.shirtShoulderMat);
+    shCapL.position.set(-0.20, 0.055, 0);
+    const shCapR = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.155, 0.202), this.shirtShoulderMat);
+    shCapR.position.set(0.20, 0.055, 0);
+    const collarSkin = new THREE.Mesh(new THREE.BoxGeometry(0.115, 0.045, 0.216), this.skinMat);
+    collarSkin.position.set(0, 0.105, 0);
     upperTorso.mesh.add(shCapL, shCapR, collarSkin);
 
-    // 4. Neck & Head (with dynamic emotion face plane on +Z!)
-    const neck = createLimb('neck', 'Шея', 0.12, 0.08, 0.12, ox, 1.47, oz, 2, this.skinMat, 40, false);
-    const head = createLimb('head', 'Голова', 0.22, 0.24, 0.22, ox, 1.62, oz, 4.5, this.skinMat, 35, true);
+    // 4. Neck & Head (высокая прямоугольная голова с плоской шапкой волос и сохранённым лицом)
+    const neck = createLimb('neck', 'Шея', 0.105, 0.075, 0.105, ox, 1.465, oz, 2, this.skinMat, 40, false);
+    const head = createLimb('head', 'Голова', 0.216, 0.25, 0.216, ox, 1.625, oz, 4.5, this.skinMat, 35, true);
 
-    const hairCap = new THREE.Mesh(new THREE.BoxGeometry(0.232, 0.068, 0.232), this.hairMat);
-    hairCap.position.set(0, 0.095, 0);
+    const hairCap = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.032, 0.22), this.hairMat);
+    hairCap.position.set(0, 0.115, 0);
     head.mesh.add(hairCap);
 
-    // Front animated face plane (+Z local face of head)
-    const facePlane = new THREE.Mesh(new THREE.PlaneGeometry(0.218, 0.218), this.faceMat);
-    facePlane.position.set(0, -0.01, 0.111);
+    const facePlane = new THREE.Mesh(new THREE.PlaneGeometry(0.214, 0.224), this.faceMat);
+    facePlane.position.set(0, -0.008, 0.109);
     head.mesh.add(facePlane);
 
-    // 5. Left & Right Upper Arms (Short grey sleeves) & Forearms (Bare skin + fingerless gloves + weapon mount)
-    const upperArmL = createLimb('upperArmL', 'Левое плечо', 0.12, 0.25, 0.12, ox - 0.26, 1.26, oz, 2.6, this.shirtChestMat, 38, true);
-    const forearmL = createLimb('forearmL', 'Левое предплечье', 0.105, 0.25, 0.105, ox - 0.26, 0.99, oz, 2.0, this.skinMat, 34, true);
+    // 5. Left & Right Arms (прямые блочные руки: серый рукав -> голое предплечье -> коричневая беспалая перчатка -> пальцы)
+    const upperArmL = createLimb('upperArmL', 'Левое плечо', 0.115, 0.255, 0.115, ox - 0.26, 1.26, oz, 2.6, this.shirtChestMat, 38, true);
+    const forearmL = createLimb('forearmL', 'Левое предплечье', 0.102, 0.25, 0.102, ox - 0.26, 0.99, oz, 2.0, this.skinMat, 34, true);
     this._addGoredollHandDetails(forearmL.mesh, true);
 
-    const upperArmR = createLimb('upperArmR', 'Правое плечо', 0.12, 0.25, 0.12, ox + 0.26, 1.26, oz, 2.6, this.shirtChestMat, 38, true);
-    const forearmR = createLimb('forearmR', 'Правое предплечье', 0.105, 0.25, 0.105, ox + 0.26, 0.99, oz, 2.0, this.skinMat, 34, true);
+    const upperArmR = createLimb('upperArmR', 'Правое плечо', 0.115, 0.255, 0.115, ox + 0.26, 1.26, oz, 2.6, this.shirtChestMat, 38, true);
+    const forearmR = createLimb('forearmR', 'Правое предплечье', 0.102, 0.25, 0.102, ox + 0.26, 0.99, oz, 2.0, this.skinMat, 34, true);
     this._addGoredollHandDetails(forearmR.mesh, false);
 
-    // Equippable 3D Weapon Mesh on Right Hand (hidden while peaceful, shown when retaliating!)
     this.weaponMeshGroup = this._createEquippedWeaponMesh();
     this.weaponMeshGroup.visible = this.hostileToPlayer;
     forearmR.mesh.add(this.weaponMeshGroup);
 
-    // 6. Left & Right Thighs & Calves
-    const thighL = createLimb('thighL', 'Левое бедро', 0.135, 0.36, 0.145, ox - 0.085, 0.63, oz, 4.5, this.pantsMat, 44, true);
-    const calfL = createLimb('calfL', 'Левая голень', 0.125, 0.38, 0.135, ox - 0.085, 0.24, oz, 3.8, this.pantsMat, 38, true);
+    // 6. Left & Right Legs (тёмные штаны со ступенькой колена и коричневыми ботинками)
+    const thighL = createLimb('thighL', 'Левое бедро', 0.128, 0.36, 0.138, ox - 0.092, 0.63, oz, 4.5, this.pantsMat, 44, true);
+    const calfL = createLimb('calfL', 'Левая голень', 0.114, 0.38, 0.124, ox - 0.092, 0.24, oz, 3.8, this.pantsMat, 38, true);
     this._addGoredollBootDetails(calfL.mesh);
 
-    const thighR = createLimb('thighR', 'Правое бедро', 0.135, 0.36, 0.145, ox + 0.085, 0.63, oz, 4.5, this.pantsMat, 44, true);
-    const calfR = createLimb('calfR', 'Правая голень', 0.125, 0.38, 0.135, ox + 0.085, 0.24, oz, 3.8, this.pantsMat, 38, true);
+    const thighR = createLimb('thighR', 'Правое бедро', 0.128, 0.36, 0.138, ox + 0.092, 0.63, oz, 4.5, this.pantsMat, 44, true);
+    const calfR = createLimb('calfR', 'Правая голень', 0.114, 0.38, 0.124, ox + 0.092, 0.24, oz, 3.8, this.pantsMat, 38, true);
     this._addGoredollBootDetails(calfR.mesh);
 
-    // Connect all joints with PointToPointConstraints and store references for dismemberment!
-    const connect = (parentLimb, childLimb, pivotParent, pivotChild) => {
-      const c = new CANNON.PointToPointConstraint(
-        parentLimb.body,
-        new CANNON.Vec3(pivotParent[0], pivotParent[1], pivotParent[2]),
-        childLimb.body,
-        new CANNON.Vec3(pivotChild[0], pivotChild[1], pivotChild[2])
-      );
+    // ШАГ 5: Физические суставы CANNON.ConeTwistConstraint с угловыми ограничениями:
+    // шея ±45° (PI/4), плечи ±60° (PI/3), локти ±90° (PI/2), колени ±90° (PI/2).
+    const connectWithAngleLimit = (parentLimb, childLimb, pivotParent, pivotChild, maxAngleRad, twistAngleRad = Math.PI / 8) => {
+      const c = new CANNON.ConeTwistConstraint(parentLimb.body, childLimb.body, {
+        pivotA: new CANNON.Vec3(pivotParent[0], pivotParent[1], pivotParent[2]),
+        pivotB: new CANNON.Vec3(pivotChild[0], pivotChild[1], pivotChild[2]),
+        axisA: new CANNON.Vec3(0, 1, 0),
+        axisB: new CANNON.Vec3(0, 1, 0),
+        angle: maxAngleRad,
+        twistAngle: twistAngleRad
+      });
       c.collideConnected = false;
       this.world.addConstraint(c);
       this.constraints.push(c);
@@ -531,22 +563,31 @@ export class RagdollNPC {
       parentLimb.childLimb = childLimb;
     };
 
-    connect(pelvis, abdomen, [0, 0.08, 0], [0, -0.09, 0]);
-    connect(abdomen, upperTorso, [0, 0.09, 0], [0, -0.14, 0]);
-    connect(upperTorso, neck, [0, 0.14, 0], [0, -0.04, 0]);
-    connect(neck, head, [0, 0.04, 0], [0, -0.12, 0]);
+    const DEG45 = Math.PI / 4; // ±45° (Шея)
+    const DEG60 = Math.PI / 3; // ±60° (Плечи)
+    const DEG90 = Math.PI / 2; // ±90° (Локти и Колени)
 
-    connect(upperTorso, upperArmL, [-0.24, 0.10, 0], [0, 0.12, 0]);
-    connect(upperArmL, forearmL, [0, -0.13, 0], [0, 0.12, 0]);
+    // Позвоночник
+    connectWithAngleLimit(pelvis, abdomen, [0, 0.08, 0], [0, -0.09, 0], Math.PI / 5, Math.PI / 8);
+    connectWithAngleLimit(abdomen, upperTorso, [0, 0.09, 0], [0, -0.13, 0], Math.PI / 5, Math.PI / 8);
 
-    connect(upperTorso, upperArmR, [0.24, 0.10, 0], [0, 0.12, 0]);
-    connect(upperArmR, forearmR, [0, -0.13, 0], [0, 0.12, 0]);
+    // Шея (±45°)
+    connectWithAngleLimit(upperTorso, neck, [0, 0.13, 0], [0, -0.04, 0], DEG45, DEG45 * 0.5);
+    connectWithAngleLimit(neck, head, [0, 0.04, 0], [0, -0.125, 0], DEG45, DEG45);
 
-    connect(pelvis, thighL, [-0.085, -0.08, 0], [0, 0.18, 0]);
-    connect(thighL, calfL, [0, -0.18, 0], [0, 0.19, 0]);
+    // Плечи (±60°) и Локти (±90°)
+    connectWithAngleLimit(upperTorso, upperArmL, [-0.24, 0.09, 0], [0, 0.12, 0], DEG60, DEG45);
+    connectWithAngleLimit(upperArmL, forearmL, [0, -0.13, 0], [0, 0.12, 0], DEG90, Math.PI / 10);
 
-    connect(pelvis, thighR, [0.085, -0.08, 0], [0, 0.18, 0]);
-    connect(thighR, calfR, [0, -0.18, 0], [0, 0.19, 0]);
+    connectWithAngleLimit(upperTorso, upperArmR, [0.24, 0.09, 0], [0, 0.12, 0], DEG60, DEG45);
+    connectWithAngleLimit(upperArmR, forearmR, [0, -0.13, 0], [0, 0.12, 0], DEG90, Math.PI / 10);
+
+    // Тазобедренные суставы (±60°) и Колени (±90°)
+    connectWithAngleLimit(pelvis, thighL, [-0.092, -0.07, 0], [0, 0.18, 0], DEG60, Math.PI / 10);
+    connectWithAngleLimit(thighL, calfL, [0, -0.18, 0], [0, 0.19, 0], DEG90, Math.PI / 12);
+
+    connectWithAngleLimit(pelvis, thighR, [0.092, -0.07, 0], [0, 0.18, 0], DEG60, Math.PI / 10);
+    connectWithAngleLimit(thighR, calfR, [0, -0.18, 0], [0, 0.19, 0], DEG90, Math.PI / 12);
 
     for (const l of this.limbList) {
       l.mesh.traverse((child) => {
@@ -558,33 +599,33 @@ export class RagdollNPC {
   }
 
   _addGoredollHandDetails(forearmMesh, isLeft) {
-    const glove = new THREE.Mesh(new THREE.BoxGeometry(0.114, 0.09, 0.114), this.gloveMat);
+    const glove = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.088, 0.11), this.gloveMat);
     glove.position.set(0, -0.10, 0);
     forearmMesh.add(glove);
 
-    const fingers = new THREE.Mesh(new THREE.BoxGeometry(0.102, 0.048, 0.102), this.skinMat);
-    fingers.position.set(0, -0.165, 0);
+    const fingers = new THREE.Mesh(new THREE.BoxGeometry(0.098, 0.052, 0.098), this.skinMat);
+    fingers.position.set(0, -0.168, 0);
     forearmMesh.add(fingers);
 
     const side = isLeft ? 1 : -1;
     const thumbGlove = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.045, 0.042), this.gloveMat);
-    thumbGlove.position.set(side * 0.065, -0.095, 0.025);
+    thumbGlove.position.set(side * 0.062, -0.095, 0.025);
     const thumbTip = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.032, 0.036), this.skinMat);
-    thumbTip.position.set(side * 0.065, -0.13, 0.025);
+    thumbTip.position.set(side * 0.062, -0.13, 0.025);
     forearmMesh.add(thumbGlove, thumbTip);
   }
 
   _addGoredollBootDetails(calfMesh) {
-    const ankleBoot = new THREE.Mesh(new THREE.BoxGeometry(0.136, 0.12, 0.146), this.bootMat);
+    const ankleBoot = new THREE.Mesh(new THREE.BoxGeometry(0.132, 0.13, 0.142), this.bootMat);
     ankleBoot.position.set(0, -0.11, 0);
     calfMesh.add(ankleBoot);
 
-    const footBoot = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.085, 0.22), this.bootMat);
-    footBoot.position.set(0, -0.175, 0.038);
+    const footBoot = new THREE.Mesh(new THREE.BoxGeometry(0.136, 0.085, 0.215), this.bootMat);
+    footBoot.position.set(0, -0.175, 0.036);
     calfMesh.add(footBoot);
 
-    const sole = new THREE.Mesh(new THREE.BoxGeometry(0.144, 0.026, 0.226), this.bootSoleMat);
-    sole.position.set(0, -0.225, 0.038);
+    const sole = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.026, 0.22), this.bootSoleMat);
+    sole.position.set(0, -0.225, 0.036);
     calfMesh.add(sole);
   }
 
@@ -619,7 +660,6 @@ export class RagdollNPC {
       this.muzzleFlashMesh.visible = false;
       g.add(this.muzzleFlashMesh);
     } else {
-      // Upgraded Forged Steel Crowbar with curved gooseneck & split claw
       const barRed = new THREE.MeshStandardMaterial({ color: 0xb91c1c, metalness: 0.72, roughness: 0.34 });
       const steelTip = new THREE.MeshStandardMaterial({ color: 0xdbeafe, metalness: 0.9, roughness: 0.2 });
       const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.50, 6), barRed);
@@ -647,8 +687,11 @@ export class RagdollNPC {
   }
 
   /**
-   * Applies realistic GoreBox localized wounds (textured decal + recessed flesh cavity)
-   * and triggers full limb dismemberment with bone, viscera & flowing blood when limb HP <= 0!
+   * Нанесение урона сегменту НПС:
+   * - Накладывает локальные декали повреждений на модель и на пол (из пула 40 текстур)
+   * - Воспроизводит звук удара и голос из пула 10 голосовых реакций
+   * - При низком здоровье (<= 28 HP) переводит НПС в режим Сдачи (SURRENDER — руки вверх!)
+   * - При критическом уроне (0 HP) переводит НПС в состояние «обездвижен» (Ragdoll)
    */
   damageLimb(limb, amount, hitPoint, impulse = null, woundType = 'bullet', byPlayer = false) {
     if (!limb) return;
@@ -663,41 +706,38 @@ export class RagdollNPC {
 
     const worldHit = hitPoint ? hitPoint.clone() : limb.mesh.position.clone();
 
-    // 1. Attach a localized 3D GoreBox Wound Decal & Recessed Flesh Cavity on the limb mesh (NOT turning the whole limb red!)
-    this._attachLocalizedWound(limb, worldHit, woundType);
+    // 1. Локальная декаль повреждения на сегменте
+    this._attachLocalizedDamageDecal(limb, worldHit, woundType);
 
-    // 2. If head was hit or nearby, add blood splatter to face canvas & set PAIN emotion
-    if (limb.key === 'head' || limb.key === 'upperTorso' || Math.random() < 0.45) {
-      this.faceBloodSplats.push({
+    if (limb.key === 'head' || limb.key === 'upperTorso' || Math.random() < 0.4) {
+      this.faceDamageMarks.push({
         x: 45 + Math.random() * 165,
         y: 55 + Math.random() * 155,
-        r: 6 + Math.random() * 16,
-        dark: Math.random() > 0.45
+        r: 5 + Math.random() * 14
       });
-      if (this.faceBloodSplats.length > 14) this.faceBloodSplats.shift();
+      if (this.faceDamageMarks.length > 12) this.faceDamageMarks.shift();
     }
 
     if (!this.dead) {
       this.setEmotion('PAIN', 0.9);
-      this.sound.playNpcVocal('pain');
+      this.sound.playNpcVocal('pain'); // Выбирает из пула 10 звуков голоса НПС
     }
 
-    // 3. Spawn instant blood spray + floor splatter
-    this._spawnBloodSpray(worldHit, Math.min(18, Math.ceil(actualDamage * 0.42)), impulse);
+    // 2. ШАГ 2: Динамическая тёмная декаль повреждения на полу из пула 40 текстур
+    this._spawnImpactParticles(worldHit, Math.min(14, Math.ceil(actualDamage * 0.35)), impulse);
     this.propsManager.addFloorDecal(
-      worldHit.x + (Math.random() - 0.5) * 0.4,
-      worldHit.z + (Math.random() - 0.5) * 0.4,
-      0.24 + Math.random() * 0.25,
-      'blood'
+      worldHit.x + (Math.random() - 0.5) * 0.35,
+      worldHit.z + (Math.random() - 0.5) * 0.35,
+      0.26 + Math.random() * 0.22,
+      'damage'
     );
     this.sound.playImpact('flesh', Math.min(1, actualDamage / 25));
 
-    // 4. Check for Limb Severing / Dismemberment (Отрыв конечности с внутренностями, костью и потоком крови!)
+    // 3. Проверка отсоединения сегмента при разрушении сустава
     if (limb.severable && !limb.severed && limb.hp <= 0) {
       this.severLimb(limb, impulse);
     }
 
-    // 5. Apply physical impulse if ragdolled or knocked down
     if (impulse) {
       limb.body.wakeUp();
       limb.body.applyImpulse(
@@ -706,7 +746,7 @@ export class RagdollNPC {
       );
     }
 
-    // 6. Check death or knockdown
+    // 4. ШАГ 5: Проверка перехода в состояние «обездвижен» (Ragdoll) или Сдачи (SURRENDER при низком здоровье)
     if (this.hp <= 0 && !this.dead) {
       this.kill(impulse);
     } else if (!this.dead) {
@@ -719,28 +759,43 @@ export class RagdollNPC {
       if (legMissing) {
         this.aiState = 'CRAWL_AGONY';
         this.enterRagdoll(999);
-      } else if (actualDamage > 22 || limb.key === 'thighL' || limb.key === 'thighR' || limb.key === 'calfL' || limb.key === 'calfR') {
-        this.enterRagdoll(1.8 + Math.min(2.2, actualDamage * 0.04));
+      } else if (this.hp <= 28 && this.personality !== 'dummy') {
+        // ШАГ 5: При низком здоровье НПС сдаётся и поднимает руки вверх!
+        this._enterSurrenderState();
+      } else if (actualDamage > 24 || limb.key === 'thighL' || limb.key === 'thighR' || limb.key === 'calfL' || limb.key === 'calfR') {
+        this.enterRagdoll(1.8 + Math.min(2.0, actualDamage * 0.04));
       }
 
-      if (byPlayer && this.personality !== 'dummy') {
+      if (byPlayer && this.personality !== 'dummy' && !this.surrendered) {
         this.onWitnessPlayerViolence(null, true);
       }
     }
   }
 
   /**
-   * Attaches a textured 3D wound decal + recessed muscle/bone cavity directly onto the hit surface of `limb.mesh`.
+   * ШАГ 5: Переводит НПС в состояние сдачи (поднимает обе руки вверх при низком здоровье).
    */
-  _attachLocalizedWound(limb, worldHitPoint, woundType = 'bullet') {
-    if (limb.wounds.length >= 8) return; // Cap per limb for mobile 60 FPS
+  _enterSurrenderState() {
+    if (this.dead) return;
+    this.surrendered = true;
+    this.hostileToPlayer = false;
+    this.aiState = 'SURRENDER';
+    this.stateTimer = 30.0;
+    this.setEmotion('FEAR', 10.0);
+    if (this.weaponMeshGroup) {
+      this.weaponMeshGroup.visible = false;
+    }
+    this.sound.playNpcVocal('surrender');
+  }
+
+  _attachLocalizedDamageDecal(limb, worldHitPoint, woundType = 'bullet') {
+    if (limb.wounds.length >= 8) return;
 
     const localPt = limb.mesh.worldToLocal(worldHitPoint.clone());
     const hw = limb.dims.w / 2;
     const hh = limb.dims.h / 2;
     const hd = limb.dims.d / 2;
 
-    // Clamp onto the nearest face of the limb box and orient normal outward
     localPt.x = Math.max(-hw, Math.min(hw, localPt.x));
     localPt.y = Math.max(-hh, Math.min(hh, localPt.y));
     localPt.z = Math.max(-hd, Math.min(hd, localPt.z));
@@ -766,22 +821,19 @@ export class RagdollNPC {
 
     const woundGroup = new THREE.Group();
     woundGroup.position.copy(localPt);
+    woundGroup.lookAt(localPt.clone().add(normal));
 
-    const lookTarget = localPt.clone().add(normal);
-    woundGroup.lookAt(lookTarget);
-
-    const wSize = woundType === 'slash' ? 0.11 : 0.085;
+    const wSize = woundType === 'slash' ? 0.105 : 0.082;
     const tex =
       woundType === 'slash'
         ? this.goreTextures?.slashWound
         : this.goreTextures?.bulletWound;
 
-    // 1. Textured GoreBox wound decal plane flush with skin/shirt
     const decalMat = new THREE.MeshBasicMaterial({
       map: tex || null,
-      color: tex ? 0xffffff : 0x7f1d1d,
+      color: 0xffffff,
       transparent: true,
-      opacity: 0.96,
+      opacity: 0.94,
       depthWrite: false,
       polygonOffset: true,
       polygonOffsetFactor: -2
@@ -790,51 +842,17 @@ export class RagdollNPC {
     decalMesh.rotation.z = Math.random() * Math.PI * 2;
     woundGroup.add(decalMesh);
 
-    // 2. 3D protruding torn flesh / deep wound cavity with exposed white bone chip on severe hits
-    if (limb.hp < limb.maxHp * 0.65) {
-      const fleshChunk = new THREE.Mesh(
-        new THREE.CylinderGeometry(wSize * 0.24, wSize * 0.30, 0.014, 8),
-        this.visceraMat
-      );
-      fleshChunk.rotation.x = Math.PI / 2;
-      woundGroup.add(fleshChunk);
-
-      if (limb.hp < limb.maxHp * 0.35) {
-        const boneChip = new THREE.Mesh(
-          new THREE.BoxGeometry(wSize * 0.16, wSize * 0.12, 0.018),
-          this.boneMat
-        );
-        woundGroup.add(boneChip);
-      }
-    }
-
     limb.mesh.add(woundGroup);
     limb.wounds.push(woundGroup);
-
-    // Add a slow bleeding drip emitter from this open wound for 4.5s
-    this.stumpEmitters.push({
-      limb,
-      localOffset: localPt.clone(),
-      localNormal: normal.clone(),
-      timer: 4.5,
-      interval: 0.22,
-      accum: 0,
-      speed: 1.4
-    });
   }
 
   /**
-   * Completely severs `limb` from its parent joint, exposing:
-   * - Cross-section muscle/flesh cap (`goreCrossMat`)
-   * - Protruding white bone shaft (`Костная ткань`) with red marrow core
-   * - Hanging visceral organs / tendons (`Внутренности`)
-   * - Pulsing arterial blood fountain (`Течёт и хлещет кровь`)
+   * Отсоединение сегмента с отображением внутренних текстур на стыке.
    */
   severLimb(limb, impulse = null) {
     if (!limb || limb.severed || !limb.jointConstraint) return;
     limb.severed = true;
 
-    // 1. Remove physical Cannon constraint connecting this limb to its parent
     this.world.removeConstraint(limb.jointConstraint);
     const cIdx = this.constraints.indexOf(limb.jointConstraint);
     if (cIdx !== -1) this.constraints.splice(cIdx, 1);
@@ -842,43 +860,19 @@ export class RagdollNPC {
 
     this.sound.playGoreSever();
 
-    // 2. Attach 3D Gore Stump (Bone + Viscera + Cross-Section Flesh) on the parent's socket!
     const parent = limb.parentLimb;
     if (parent && limb.jointLocalOnParent) {
       const outDirParent = limb.jointLocalOnParent.clone().normalize();
       if (outDirParent.lengthSq() < 0.01) outDirParent.set(0, -1, 0);
-      this._attachGoreStump(parent, limb.jointLocalOnParent, outDirParent, limb.dims.w * 0.48, true);
-
-      // Continuous arterial blood fountain spurting from parent stump!
-      this.stumpEmitters.push({
-        limb: parent,
-        localOffset: limb.jointLocalOnParent.clone(),
-        localNormal: outDirParent.clone(),
-        timer: 9.5,
-        interval: 0.065,
-        accum: 0,
-        speed: 4.2
-      });
+      this._attachInternalJointTexture(parent, limb.jointLocalOnParent, outDirParent, limb.dims.w * 0.46, true);
     }
 
-    // 3. Attach 3D Gore Stump (Bone + Viscera) on the severed limb's torn joint end!
     if (limb.jointLocalOnSelf) {
       const outDirSelf = limb.jointLocalOnSelf.clone().normalize();
       if (outDirSelf.lengthSq() < 0.01) outDirSelf.set(0, 1, 0);
-      this._attachGoreStump(limb, limb.jointLocalOnSelf, outDirSelf, limb.dims.w * 0.46, false);
-
-      this.stumpEmitters.push({
-        limb,
-        localOffset: limb.jointLocalOnSelf.clone(),
-        localNormal: outDirSelf.clone(),
-        timer: 5.5,
-        interval: 0.12,
-        accum: 0,
-        speed: 2.2
-      });
+      this._attachInternalJointTexture(limb, limb.jointLocalOnSelf, outDirSelf, limb.dims.w * 0.44, false);
     }
 
-    // 4. Make the severed limb kick away physically
     limb.body.wakeUp();
     const kick = impulse
       ? impulse.clone().multiplyScalar(0.35)
@@ -890,11 +884,8 @@ export class RagdollNPC {
       (Math.random() - 0.5) * 10
     );
 
-    // Big burst of blood droplets & puddle at sever point
-    this._spawnBloodSpray(limb.mesh.position, 24, impulse);
-    this.propsManager.addFloorDecal(limb.mesh.position.x, limb.mesh.position.z, 0.55, 'blood');
+    this.propsManager.addFloorDecal(limb.mesh.position.x, limb.mesh.position.z, 0.45, 'damage');
 
-    // 5. Decapitation = instant death; Leg sever = collapse & crawl; Arm sever = shock/pain
     if (limb.key === 'head') {
       this.kill(impulse);
     } else if (
@@ -906,17 +897,11 @@ export class RagdollNPC {
       this.aiState = 'CRAWL_AGONY';
       this.enterRagdoll(999);
     } else {
-      this.enterRagdoll(2.6);
+      this.enterRagdoll(2.4);
     }
   }
 
-  /**
-   * Builds a 3D anatomical Gore Stump mesh with:
-   * - Cross-section muscle ring
-   * - Protruding white Bone cylinder + red Bone Marrow center
-   * - Hanging glistening Viscera / Tendons / Internal tissue strands
-   */
-  _attachGoreStump(targetLimb, localPos, outDir, radius = 0.055, isParentSide = true) {
+  _attachInternalJointTexture(targetLimb, localPos, outDir, radius = 0.052, isParentSide = true) {
     const stumpGroup = new THREE.Group();
     stumpGroup.position.copy(localPos);
 
@@ -926,58 +911,26 @@ export class RagdollNPC {
     );
     stumpGroup.quaternion.copy(quat);
 
-    // 1. Cross-section muscle & torn skin cap
-    const fleshCap = new THREE.Mesh(
-      new THREE.CylinderGeometry(radius * 0.96, radius * 1.04, 0.028, 12),
-      this.goreCrossMat
+    const cap = new THREE.Mesh(
+      new THREE.CylinderGeometry(radius * 0.94, radius, 0.024, 10),
+      this.internalCrossMat
     );
-    stumpGroup.add(fleshCap);
+    stumpGroup.add(cap);
 
-    // 2. Protruding White Bone Stump (Костная ткань)
-    const boneRadius = radius * 0.42;
-    const boneLen = isParentSide ? 0.065 : 0.048;
+    const boneLen = isParentSide ? 0.055 : 0.04;
     const boneShaft = new THREE.Mesh(
-      new THREE.CylinderGeometry(boneRadius * 0.9, boneRadius, boneLen, 10),
+      new THREE.CylinderGeometry(radius * 0.36, radius * 0.38, boneLen, 8),
       this.boneMat
     );
     boneShaft.position.y = boneLen * 0.5;
     stumpGroup.add(boneShaft);
 
-    // Red spongy bone marrow cap at tip of broken bone
-    const marrowCap = new THREE.Mesh(
-      new THREE.CircleGeometry(boneRadius * 0.58, 8),
-      this.marrowMat
-    );
-    marrowCap.rotation.x = -Math.PI / 2;
-    marrowCap.position.y = boneLen + 0.002;
-    stumpGroup.add(marrowCap);
-
-    // 3. Hanging Viscera / Tendons / Internal Organs (Внутренности)
-    const visceraCount = targetLimb.key === 'neck' || targetLimb.key === 'upperTorso' || targetLimb.key === 'pelvis' ? 5 : 3;
-    for (let i = 0; i < visceraCount; i++) {
-      const a = (i / visceraCount) * Math.PI * 2 + Math.random() * 0.5;
-      const dist = radius * (0.45 + Math.random() * 0.35);
-      const strandLen = 0.045 + Math.random() * 0.065;
-
-      const strand = new THREE.Mesh(
-        new THREE.CapsuleGeometry(radius * 0.16, strandLen, 4, 6),
-        this.visceraMat
-      );
-      strand.position.set(
-        Math.cos(a) * dist,
-        strandLen * 0.45,
-        Math.sin(a) * dist
-      );
-      strand.rotation.set((Math.random() - 0.5) * 0.6, 0, (Math.random() - 0.5) * 0.6);
-      stumpGroup.add(strand);
-    }
-
     targetLimb.mesh.add(stumpGroup);
   }
 
-  _spawnBloodSpray(origin, count = 10, impulse = null) {
-    const geo = new THREE.BoxGeometry(0.036, 0.036, 0.036);
-    const mat = new THREE.MeshBasicMaterial({ color: 0x991b1b });
+  _spawnImpactParticles(origin, count = 8, impulse = null) {
+    const geo = new THREE.BoxGeometry(0.032, 0.032, 0.032);
+    const mat = new THREE.MeshBasicMaterial({ color: 0x27272a });
 
     for (let i = 0; i < count; i++) {
       const m = new THREE.Mesh(geo, mat);
@@ -985,19 +938,19 @@ export class RagdollNPC {
       this.scene.add(m);
 
       const vel = new THREE.Vector3(
-        (Math.random() - 0.5) * 4.2,
-        1.2 + Math.random() * 2.8,
-        (Math.random() - 0.5) * 4.2
+        (Math.random() - 0.5) * 4.0,
+        1.1 + Math.random() * 2.5,
+        (Math.random() - 0.5) * 4.0
       );
       if (impulse) {
-        vel.addScaledVector(impulse, 0.09);
+        vel.addScaledVector(impulse, 0.08);
       }
 
-      this.bloodParticles.push({
+      this.impactParticles.push({
         mesh: m,
         vel,
         age: 0,
-        maxAge: 0.55 + Math.random() * 0.45,
+        maxAge: 0.45 + Math.random() * 0.35,
         drippedDecal: false
       });
     }
@@ -1006,11 +959,10 @@ export class RagdollNPC {
   enterRagdoll(duration = 2.8, extraImpulse = null) {
     this.isRagdoll = true;
     this.ragdollTimer = Math.max(this.ragdollTimer, duration);
-    this.recovering = false;
 
     for (const l of this.limbList) {
       l.body.wakeUp();
-      l.body.angularDamping = 0.22;
+      l.body.angularDamping = 0.26;
       if (extraImpulse && !l.severed) {
         l.body.velocity.x += extraImpulse.x * (0.6 + Math.random() * 0.4);
         l.body.velocity.y += extraImpulse.y * (0.6 + Math.random() * 0.4);
@@ -1019,6 +971,9 @@ export class RagdollNPC {
     }
   }
 
+  /**
+   * ШАГ 5: Переход НПС в состояние «обездвижен» с полной физикой Ragdoll и ограничениями суставов.
+   */
   kill(impulse = null) {
     if (this.dead) return;
     this.dead = true;
@@ -1026,11 +981,12 @@ export class RagdollNPC {
     this.isRagdoll = true;
     this.ragdollTimer = 999999;
     this.setEmotion('DEAD', 999999);
+    this.sound.playNpcVocal('immobilized');
     if (this.weaponMeshGroup) this.weaponMeshGroup.visible = false;
 
     for (const l of this.limbList) {
       l.body.wakeUp();
-      l.body.angularDamping = 0.12;
+      l.body.angularDamping = 0.18;
       if (impulse && !l.severed) {
         l.body.velocity.x += impulse.x * 0.45;
         l.body.velocity.y += impulse.y * 0.45;
@@ -1039,17 +995,18 @@ export class RagdollNPC {
     }
 
     const pos = this.getPosition();
-    this.propsManager.addFloorDecal(pos.x, pos.z, 0.68, 'blood');
+    this.propsManager.addFloorDecal(pos.x, pos.z, 0.55, 'damage');
   }
 
   revive() {
     this.dead = false;
+    this.surrendered = false;
     this.hp = this.maxHp;
     this.isRagdoll = false;
     this.ragdollTimer = 0;
     this.hostileToPlayer = this.personality === 'hostile';
     this.aiState = this.personality === 'dummy' ? 'IDLE_DUMMY' : 'STOP_LOOK';
-    this.faceBloodSplats = [];
+    this.faceDamageMarks = [];
     this.setEmotion('CALM');
 
     const p = this.limbs.pelvis.body.position;
@@ -1062,30 +1019,27 @@ export class RagdollNPC {
     }
   }
 
-  /**
-   * Called when the player shoots a weapon or attacks ANY NPC!
-   * Implements:
-   * 1) Immediate Fear/Shock reaction (backing away, hands up, terrified face, looking at player)
-   * 2) Followed by armed Retaliation / Fighting Back!
-   */
   onWitnessPlayerViolence(playerPos, wasHitDirectly = false) {
     if (this.dead || this.personality === 'dummy') return;
     if (playerPos) {
       this.dangerSourcePos = playerPos.clone();
     }
 
-    if (this.aiState === 'CRAWL_AGONY') {
+    if (this.hp <= 28) {
+      this._enterSurrenderState();
+      return;
+    }
+
+    if (this.aiState === 'CRAWL_AGONY' || this.aiState === 'SURRENDER') {
       this.setEmotion('FEAR', 4.0);
       return;
     }
 
-    // If already retaliating or hit directly a second time, switch straight into armed retaliation!
     if (this.hostileToPlayer || (wasHitDirectly && this.aiState === 'FEAR_SHOCK')) {
       this._enterRetaliationMode();
       return;
     }
 
-    // First reaction: Shock & Fear ("испугались тебя, если ты стрелял в одного из НПС")
     this.aiState = 'FEAR_SHOCK';
     this.stateTimer = wasHitDirectly ? 1.05 : 1.65;
     this.setEmotion('FEAR', 1.8);
@@ -1093,7 +1047,11 @@ export class RagdollNPC {
   }
 
   _enterRetaliationMode() {
-    if (this.dead || this.aiState === 'CRAWL_AGONY') return;
+    if (this.dead || this.aiState === 'CRAWL_AGONY' || this.surrendered) return;
+    if (this.hp <= 28) {
+      this._enterSurrenderState();
+      return;
+    }
     this.hostileToPlayer = true;
     this.aiState = 'RETALIATE';
     this.stateTimer = 25.0;
@@ -1105,7 +1063,7 @@ export class RagdollNPC {
   }
 
   onHearSound(soundPos, radius, type, label) {
-    if (this.dead || this.personality === 'dummy') return;
+    if (this.dead || this.personality === 'dummy' || this.surrendered) return;
     const myPos = this.getPosition();
     const dist = myPos.distanceTo(soundPos);
     if (dist > radius) return;
@@ -1113,10 +1071,8 @@ export class RagdollNPC {
     this.dangerSourcePos = soundPos.clone();
 
     if (type === 'gunshot' || type === 'explosion') {
-      // Gunshots and explosions trigger Fear -> Retaliation!
       this.onWitnessPlayerViolence(soundPos, false);
     } else if (this.aiState === 'WALK_PATROL' || this.aiState === 'STOP_LOOK') {
-      // Glass shatter / crate break makes NPC stop, look toward the sound, and investigate!
       this.aiState = 'INSPECT_PROP';
       this.targetPoint.copy(soundPos);
       this.targetPoint.y = 0;
@@ -1139,15 +1095,8 @@ export class RagdollNPC {
     );
   }
 
-  /**
-   * Main per-frame update:
-   * - Updates facial emotion blinking & eye tracking
-   * - Updates AI decisions (Walk -> Stop & Look Around -> Fear -> Retaliate)
-   * - Solves true articulated bipedal leg stride & arm pose (or Ragdoll if knocked down)
-   * - Updates arterial blood fountains from severed limbs & open wounds
-   */
   update(dt, player, allNpcs, allProps) {
-    this._updateBloodAndStumpEmitters(dt);
+    this._updateParticles(dt);
     this._updateFaceAnimation(dt, player);
 
     if (this.muzzleFlashTimer > 0) {
@@ -1162,7 +1111,6 @@ export class RagdollNPC {
       return;
     }
 
-    // Handle active ragdoll knockdown or legless crawling
     if (this.isRagdoll) {
       if (this.hasBothLegsIntact()) {
         this.ragdollTimer -= dt;
@@ -1174,19 +1122,19 @@ export class RagdollNPC {
             0,
             Math.max(-22.5, Math.min(22.5, p.z))
           );
-          if (this.hostileToPlayer) {
+          if (this.hp <= 28 && this.personality !== 'dummy') {
+            this._enterSurrenderState();
+          } else if (this.hostileToPlayer) {
             this.aiState = 'RETALIATE';
           }
         }
       } else {
-        // Crawling in agony when a leg is severed!
         this._updateCrawlingAgony(dt, player);
       }
       this._syncMeshesFromPhysics();
       return;
     }
 
-    // Standing / Walking AI & True Articulated Stride Animation
     this._updateAI(dt, player, allNpcs, allProps);
     this._solveArticulatedStandingAndWalkPose(dt, player);
   }
@@ -1198,7 +1146,6 @@ export class RagdollNPC {
       this.emotionLockTimer -= dt;
     }
 
-    // Natural eye blinking every 2.5 - 4.8 seconds
     this.blinkTimer -= dt;
     if (this.blinkTimer <= 0) {
       if (!this.isBlinking) {
@@ -1212,7 +1159,6 @@ export class RagdollNPC {
       }
     }
 
-    // Eye pupil tracking toward head look direction or player
     const targetEyeX = Math.max(-1, Math.min(1, -this.headYawOffset * 1.4));
     const prevEyeX = this.eyeLookX;
     this.eyeLookX += (targetEyeX - this.eyeLookX) * Math.min(1, dt * 8);
@@ -1234,13 +1180,6 @@ export class RagdollNPC {
     }
   }
 
-  /**
-   * Smart AI State Machine:
-   * - Natural patrol: walks to a point, stops, looks left/right, inspects props/other NPCs
-   * - Avoids obstacles (crates, barrels, workbenches) and platform edges
-   * - Reacts with Fear/Shock when player shoots or attacks any NPC
-   * - Transitions from Fear into active Armed Retaliation (shooting / melee counter-attack!)
-   */
   _updateAI(dt, player, allNpcs, allProps) {
     this.stateTimer -= dt;
     if (this.attackCooldown > 0) this.attackCooldown -= dt;
@@ -1257,30 +1196,50 @@ export class RagdollNPC {
       return;
     }
 
+    // Check low-HP surrender condition
+    if (this.hp <= 28 && !this.surrendered) {
+      this._enterSurrenderState();
+    }
+
     let moveDir = new THREE.Vector3(0, 0, 0);
     let desiredSpeed = 0;
     let desiredYaw = this.facingYaw;
 
-    // 1. STATE: FEAR_SHOCK (Initial terror when player shoots or attacks an NPC)
-    if (this.aiState === 'FEAR_SHOCK') {
+    // ШАГ 5: STATE SURRENDER (Сдаётся при низком здоровье — поднимает руки вверх!)
+    if (this.aiState === 'SURRENDER') {
+      this.setEmotion('FEAR');
+      const toPlayer = new THREE.Vector3(playerPos.x - myPos.x, 0, playerPos.z - myPos.z);
+      if (toPlayer.lengthSq() > 0.001) {
+        desiredYaw = Math.atan2(toPlayer.x, toPlayer.z);
+      }
+      // Если игрок подходит слишком близко, медленно пятится назад с поднятыми руками
+      if (distToPlayer < 2.8) {
+        moveDir.copy(toPlayer).normalize().multiplyScalar(-1);
+        desiredSpeed = 1.05;
+      } else {
+        desiredSpeed = 0;
+      }
+      this.targetHeadYaw = Math.sin(performance.now() * 0.008) * 0.14;
+    }
+
+    // 1. STATE: FEAR_SHOCK
+    else if (this.aiState === 'FEAR_SHOCK') {
       this.setEmotion('FEAR');
       const threat = this.dangerSourcePos || playerPos;
       const toThreat = new THREE.Vector3(threat.x - myPos.x, 0, threat.z - myPos.z);
       if (toThreat.lengthSq() > 0.001) {
         desiredYaw = Math.atan2(toThreat.x, toThreat.z);
-        // Backpedal away from the shooter while facing them with hands raised!
         moveDir.copy(toThreat).normalize().multiplyScalar(-1);
         desiredSpeed = 2.1;
       }
       this.targetHeadYaw = Math.sin(performance.now() * 0.018) * 0.18;
 
       if (this.stateTimer <= 0) {
-        // After initial shock, NPC gathers courage and fights back!
         this._enterRetaliationMode();
       }
     }
 
-    // 2. STATE: RETALIATE (Armed Counter-Attack — giving fight back!)
+    // 2. STATE: RETALIATE
     else if (this.aiState === 'RETALIATE') {
       this.setEmotion('ANGRY');
       if (this.weaponMeshGroup && !this.limbs.forearmR.severed && !this.limbs.upperArmR.severed) {
@@ -1293,7 +1252,6 @@ export class RagdollNPC {
       desiredYaw = Math.atan2(toPlayer.x, toPlayer.z);
       this.targetHeadYaw = 0;
 
-      // Tactical strafing timer
       this.strafeTimer -= dt;
       if (this.strafeTimer <= 0) {
         this.strafeDir = Math.random() > 0.5 ? 1 : -1;
@@ -1304,7 +1262,6 @@ export class RagdollNPC {
       const rightArmIntact = !this.limbs.upperArmR.severed && !this.limbs.forearmR.severed;
 
       if (this.hasPistol && rightArmIntact) {
-        // Ranged tactical combat: keep 4.5m - 10m distance, strafe laterally, and fire pistol!
         if (flatDist > 9.5) {
           moveDir.copy(toPlayer).addScaledVector(rightVec, 0.45).normalize();
           desiredSpeed = 2.75;
@@ -1316,13 +1273,11 @@ export class RagdollNPC {
           desiredSpeed = 1.85;
         }
 
-        // Fire pistol at player when aimed
         if (this.attackCooldown <= 0 && flatDist < 18.0) {
           this.attackCooldown = 1.15 + Math.random() * 0.55;
           this._firePistolAtPlayer(player, flatDist);
         }
       } else {
-        // Melee counter-attack: close distance with weaving and strike!
         if (flatDist > 1.45) {
           moveDir.copy(toPlayer).addScaledVector(rightVec, 0.28).normalize();
           desiredSpeed = 3.15;
@@ -1338,7 +1293,7 @@ export class RagdollNPC {
       }
     }
 
-    // 3. STATE: INSPECT_PROP (Heard a sound or checking a nearby object)
+    // 3. STATE: INSPECT_PROP
     else if (this.aiState === 'INSPECT_PROP') {
       this.setEmotion('CURIOUS');
       const toTarget = new THREE.Vector3(this.targetPoint.x - myPos.x, 0, this.targetPoint.z - myPos.z);
@@ -1350,7 +1305,6 @@ export class RagdollNPC {
         desiredSpeed = 2.1;
         this.targetHeadYaw = 0;
       } else {
-        // Arrived at sound location: stop and look left/right carefully!
         desiredSpeed = 0;
         this.targetHeadYaw = Math.sin(performance.now() * 0.0045) * 0.55;
       }
@@ -1361,13 +1315,12 @@ export class RagdollNPC {
       }
     }
 
-    // 4. STATE: STOP_LOOK (Standing still, looking around with head and eyes, noticing player)
+    // 4. STATE: STOP_LOOK
     else if (this.aiState === 'STOP_LOOK') {
       desiredSpeed = 0;
       this.lookSubTimer += dt;
 
       if (distToPlayer < 4.8) {
-        // Look curiously at the player when player stands close
         this.setEmotion('CURIOUS');
         const toP = new THREE.Vector3(playerPos.x - myPos.x, 0, playerPos.z - myPos.z);
         const angleToP = Math.atan2(toP.x, toP.z);
@@ -1382,20 +1335,18 @@ export class RagdollNPC {
           this.targetHeadYaw = Math.max(-0.65, Math.min(0.65, diff));
         }
       } else {
-        // Naturally scan head left, center, right
         this.setEmotion('CALM');
         this.targetHeadYaw = Math.sin(this.lookSubTimer * 1.6) * 0.52;
       }
 
       if (this.stateTimer <= 0) {
-        // Pick a smart patrol point (near workbenches, crate stacks, or other NPCs)
         this._pickSmartPatrolPoint(allNpcs);
         this.aiState = 'WALK_PATROL';
         this.stateTimer = 4.0 + Math.random() * 3.5;
       }
     }
 
-    // 5. STATE: WALK_PATROL (Walking purposefully to destination, then stopping to look around)
+    // 5. STATE: WALK_PATROL
     else {
       this.setEmotion('CALM');
       const toTarget = new THREE.Vector3(this.targetPoint.x - myPos.x, 0, this.targetPoint.z - myPos.z);
@@ -1414,11 +1365,10 @@ export class RagdollNPC {
       }
     }
 
-    // Obstacle avoidance (steer around crates, barrels, workbenches, other NPCs, and platform edges!)
+    // Obstacle avoidance
     if (desiredSpeed > 0.05) {
       const steer = new THREE.Vector3();
 
-      // Avoid props
       for (const p of allProps) {
         if (p.broken || !p.solidForPlayer) continue;
         const dx = myPos.x - p.body.position.x;
@@ -1432,7 +1382,6 @@ export class RagdollNPC {
         }
       }
 
-      // Avoid workbenches (-4.5, -5.5) and (5.2, -4.8)
       const benches = [
         { x: -4.5, z: -5.5, rx: 1.9, rz: 0.9 },
         { x: 5.2, z: -4.8, rx: 1.6, rz: 0.85 }
@@ -1446,7 +1395,6 @@ export class RagdollNPC {
         }
       }
 
-      // Avoid other NPCs
       for (const other of allNpcs) {
         if (other === this || other.dead) continue;
         const oPos = other.getPosition();
@@ -1460,29 +1408,25 @@ export class RagdollNPC {
         }
       }
 
-      // Keep well inside 50m platform
       if (Math.abs(myPos.x) > 19.5) steer.x -= Math.sign(myPos.x) * 3.0;
       if (Math.abs(myPos.z) > 19.5) steer.z -= Math.sign(myPos.z) * 3.0;
 
       moveDir.addScaledVector(steer, 0.55);
       if (moveDir.lengthSq() > 0.001) {
         moveDir.normalize();
-        if (this.aiState !== 'FEAR_SHOCK' && this.aiState !== 'RETALIATE') {
+        if (this.aiState !== 'FEAR_SHOCK' && this.aiState !== 'RETALIATE' && this.aiState !== 'SURRENDER') {
           desiredYaw = Math.atan2(moveDir.x, moveDir.z);
         }
       }
     }
 
-    // Smoothly turn facingYaw toward desiredYaw
     let yawDiff = desiredYaw - this.facingYaw;
     while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
     while (yawDiff < -Math.PI) yawDiff += Math.PI * 2;
     this.facingYaw += yawDiff * Math.min(1, dt * 7.5);
 
-    // Smoothly turn head yaw offset
-    this.headYawOffset += (this.targetHeadYaw - this.headYawOffset) * Math.min(1, dt * 6.5);
+    this.headYawOffset = Math.max(-Math.PI / 4, Math.min(Math.PI / 4, this.headYawOffset + (this.targetHeadYaw - this.headYawOffset) * Math.min(1, dt * 6.5)));
 
-    // Advance groundPos and walkPhase
     this.currentSpeed += (desiredSpeed - this.currentSpeed) * Math.min(1, dt * 10);
     if (this.currentSpeed > 0.06 && moveDir.lengthSq() > 0.001) {
       this.groundPos.x += moveDir.x * this.currentSpeed * dt;
@@ -1493,7 +1437,6 @@ export class RagdollNPC {
       this.walkPhase += this.currentSpeed * dt * 3.7;
     } else {
       this.currentSpeed = 0;
-      // Smoothly bring walkPhase to neutral standing rest (sin(walkPhase) -> 0)
       const mod = this.walkPhase % Math.PI;
       if (mod > Math.PI * 0.5) {
         this.walkPhase += (Math.PI - mod) * Math.min(1, dt * 8);
@@ -1503,7 +1446,7 @@ export class RagdollNPC {
     }
   }
 
-  _pickSmartPatrolPoint(allNpcs) {
+  _pickSmartPatrolPoint() {
     const landmarks = [
       new THREE.Vector3(-2.4, 0, -1.2),
       new THREE.Vector3(2.4, 0, -1.4),
@@ -1523,13 +1466,12 @@ export class RagdollNPC {
 
   _firePistolAtPlayer(player, dist) {
     this.sound.playGunshot();
-    this.meleeSwingTimer = 0.18; // Recoil kick on right arm
+    this.meleeSwingTimer = 0.18;
     if (this.muzzleFlashMesh) {
       this.muzzleFlashMesh.visible = true;
       this.muzzleFlashTimer = 0.07;
     }
 
-    // Accuracy depends on distance so player can dodge/strafe
     const hitChance = Math.max(0.28, 0.78 - dist * 0.03);
     if (Math.random() < hitChance) {
       const myPos = this.groundPos;
@@ -1539,23 +1481,15 @@ export class RagdollNPC {
     }
   }
 
-  /**
-   * Solves full 11-segment Forward Kinematics for the standing/walking NPC so that:
-   * - Hip & knee joints swing naturally with lifting feet (ZERO dragging legs!)
-   * - Head looks around independently
-   * - Arms swing with walk, raise in fear, or aim weapons / punch in combat
-   * - Severed limbs are skipped so they roll freely as detached physics objects on the floor!
-   */
   _solveArticulatedStandingAndWalkPose(dt, player) {
     const walkFactor = Math.min(1, this.currentSpeed / 1.8);
     const s = Math.sin(this.walkPhase) * walkFactor;
     const c = Math.cos(this.walkPhase) * walkFactor;
 
-    // Vertical hip bob during stride
     const bobY = Math.abs(s) * 0.032;
     const px = this.groundPos.x;
     const pz = this.groundPos.z;
-    const py = 0.90 + bobY;
+    const py = 0.89 + bobY;
 
     const rootQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.facingYaw);
 
@@ -1577,36 +1511,37 @@ export class RagdollNPC {
     const pelvisPos = new THREE.Vector3(px, py, pz);
     setBonePose(this.limbs.pelvis, pelvisPos, rootQuat);
 
-    // 2. Abdomen & Upper Torso (slight forward lean when walking & subtle counter-twist)
+    // 2. Abdomen & Upper Torso
     const torsoPitch = walkFactor * 0.06;
     const torsoTwist = -s * 0.07;
     const torsoQuat = rootQuat
       .clone()
       .multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(torsoPitch, torsoTwist, 0, 'YXZ')));
 
-    const abdomenPos = localToWorld(0, 0.17, 0, pelvisPos, rootQuat);
+    const abdomenPos = localToWorld(0, 0.175, 0, pelvisPos, rootQuat);
     setBonePose(this.limbs.abdomen, abdomenPos, torsoQuat);
 
-    const upperTorsoPos = localToWorld(0, 0.23, 0, abdomenPos, torsoQuat);
+    const upperTorsoPos = localToWorld(0, 0.225, 0, abdomenPos, torsoQuat);
     setBonePose(this.limbs.upperTorso, upperTorsoPos, torsoQuat);
 
-    // 3. Neck & Head (with independent head look yaw/pitch!)
-    const neckPos = localToWorld(0, 0.17, 0, upperTorsoPos, torsoQuat);
+    // 3. Neck & Head (limited to ±45°)
+    const neckPos = localToWorld(0, 0.165, 0, upperTorsoPos, torsoQuat);
     setBonePose(this.limbs.neck, neckPos, torsoQuat);
 
+    const clampedHeadYaw = Math.max(-Math.PI / 4, Math.min(Math.PI / 4, this.headYawOffset));
     const headQuat = torsoQuat
       .clone()
-      .multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(this.headPitchOffset, this.headYawOffset, 0, 'YXZ')));
-    const headPos = localToWorld(0, 0.15, 0, neckPos, headQuat);
+      .multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(this.headPitchOffset, clampedHeadYaw, 0, 'YXZ')));
+    const headPos = localToWorld(0, 0.155, 0, neckPos, headQuat);
     setBonePose(this.limbs.head, headPos, headQuat);
 
-    // 4. Left & Right Legs (Hip swing + Knee bend that physically lifts the foot during forward step!)
+    // 4. Legs (Knee bend strictly within ±90°)
     const solveLeg = (thighLimb, calfLimb, hipOffsetX, phaseSign) => {
-      const hipSwing = -s * phaseSign * 0.56; // Negative X rotation swings thigh forward (+Z)
+      const hipSwing = -s * phaseSign * 0.56;
       const liftPhase = Math.max(0, c * phaseSign);
-      const kneeBend = liftPhase * 0.78 + walkFactor * 0.08; // Positive X rotation bends knee backward (-Z)
+      const kneeBend = Math.min(Math.PI / 2, liftPhase * 0.78 + walkFactor * 0.08);
 
-      const hipSocket = localToWorld(hipOffsetX, -0.08, 0, pelvisPos, rootQuat);
+      const hipSocket = localToWorld(hipOffsetX, -0.075, 0, pelvisPos, rootQuat);
       const thighQuat = rootQuat
         .clone()
         .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), hipSwing));
@@ -1621,28 +1556,31 @@ export class RagdollNPC {
       setBonePose(calfLimb, calfPos, calfQuat);
     };
 
-    solveLeg(this.limbs.thighL, this.limbs.calfL, -0.085, 1);
-    solveLeg(this.limbs.thighR, this.limbs.calfR, 0.085, -1);
+    solveLeg(this.limbs.thighL, this.limbs.calfL, -0.092, 1);
+    solveLeg(this.limbs.thighR, this.limbs.calfR, 0.092, -1);
 
-    // 5. Left & Right Arms (Walk swing, Fear hands-up, or Combat aim/melee strike!)
+    // 5. Arms (Walk swing, Surrender hands high up, Fear, or Combat)
     const solveArm = (upperArm, forearm, shoulderX, isRight) => {
       let upperPitch = s * (isRight ? -1 : 1) * 0.42;
       let upperRoll = isRight ? -0.06 : 0.06;
-      let elbowBend = -0.26 - Math.max(0, -upperPitch) * 0.35;
+      let elbowBend = -0.22 - Math.max(0, -upperPitch) * 0.35;
 
-      if (this.aiState === 'FEAR_SHOCK') {
-        // Hands raised defensively in terror!
+      if (this.aiState === 'SURRENDER') {
+        // ШАГ 5: НПС сдаётся — обе руки подняты высоко вверх над головой!
+        const tremble = Math.sin(performance.now() * 0.016 + (isRight ? 1.5 : 0)) * 0.05;
+        upperPitch = -2.65 + tremble;
+        upperRoll = isRight ? -0.22 : 0.22;
+        elbowBend = -0.32;
+      } else if (this.aiState === 'FEAR_SHOCK') {
         upperPitch = -1.35 + Math.sin(performance.now() * 0.02 + (isRight ? 1 : 0)) * 0.12;
         upperRoll = isRight ? -0.25 : 0.25;
         elbowBend = -1.15;
       } else if (this.aiState === 'RETALIATE') {
         if (isRight && this.hasPistol) {
-          // Right arm extended aiming pistol straight at player + recoil kick
           upperPitch = -1.48 - (this.meleeSwingTimer > 0 ? 0.28 : 0);
           upperRoll = 0.05;
           elbowBend = -0.12;
         } else if (isRight && !this.hasPistol) {
-          // Melee weapon strike / guard
           if (this.meleeSwingTimer > 0) {
             upperPitch = -1.85 + (0.35 - this.meleeSwingTimer) * 4.2;
             elbowBend = -0.35;
@@ -1651,13 +1589,12 @@ export class RagdollNPC {
             elbowBend = -1.1;
           }
         } else {
-          // Left off-hand guard
           upperPitch = -0.75;
           elbowBend = -1.05;
         }
       }
 
-      const shoulderSocket = localToWorld(shoulderX, 0.10, 0, upperTorsoPos, torsoQuat);
+      const shoulderSocket = localToWorld(shoulderX, 0.095, 0, upperTorsoPos, torsoQuat);
       const uQuat = torsoQuat
         .clone()
         .multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(upperPitch, 0, upperRoll, 'XYZ')));
@@ -1675,7 +1612,6 @@ export class RagdollNPC {
     solveArm(this.limbs.upperArmL, this.limbs.forearmL, -0.24, false);
     solveArm(this.limbs.upperArmR, this.limbs.forearmR, 0.24, true);
 
-    // Sync any severed limbs from their independent physics bodies!
     for (const l of this.limbList) {
       if (l.severed) {
         l.mesh.position.copy(l.body.position);
@@ -1691,39 +1627,13 @@ export class RagdollNPC {
     }
   }
 
-  _updateBloodAndStumpEmitters(dt) {
-    // 1. Update continuous arterial blood fountains from severed stumps & deep wounds
-    for (let i = this.stumpEmitters.length - 1; i >= 0; i--) {
-      const em = this.stumpEmitters[i];
-      em.timer -= dt;
-      if (em.timer <= 0) {
-        this.stumpEmitters.splice(i, 1);
-        continue;
-      }
-
-      em.accum += dt;
-      if (em.accum >= em.interval) {
-        em.accum = 0;
-        const worldOrigin = em.localOffset.clone().applyMatrix4(em.limb.mesh.matrixWorld);
-        const worldDir = em.localNormal
-          .clone()
-          .applyQuaternion(em.limb.mesh.quaternion)
-          .normalize();
-
-        // Pulsing heartbeat pressure spurt
-        const pulse = 0.75 + 0.35 * Math.sin(performance.now() * 0.014);
-        const impulse = worldDir.multiplyScalar(em.speed * pulse * 10);
-        this._spawnBloodSpray(worldOrigin, 2, impulse);
-      }
-    }
-
-    // 2. Update airborne blood droplets & spawn floor blood decals when droplets hit the concrete!
-    for (let i = this.bloodParticles.length - 1; i >= 0; i--) {
-      const bp = this.bloodParticles[i];
+  _updateParticles(dt) {
+    for (let i = this.impactParticles.length - 1; i >= 0; i--) {
+      const bp = this.impactParticles[i];
       bp.age += dt;
       if (bp.age >= bp.maxAge) {
         this.scene.remove(bp.mesh);
-        this.bloodParticles.splice(i, 1);
+        this.impactParticles.splice(i, 1);
         continue;
       }
       bp.vel.y -= 14.5 * dt;
@@ -1731,9 +1641,9 @@ export class RagdollNPC {
       if (bp.mesh.position.y < 0.02) {
         bp.mesh.position.y = 0.02;
         bp.vel.set(0, 0, 0);
-        if (!bp.drippedDecal && Math.random() < 0.22) {
+        if (!bp.drippedDecal && Math.random() < 0.2) {
           bp.drippedDecal = true;
-          this.propsManager.addFloorDecal(bp.mesh.position.x, bp.mesh.position.z, 0.14 + Math.random() * 0.16, 'blood');
+          this.propsManager.addFloorDecal(bp.mesh.position.x, bp.mesh.position.z, 0.16 + Math.random() * 0.14, 'damage');
         }
       }
     }
@@ -1768,19 +1678,21 @@ export class RagdollNPC {
     const hpEl = document.getElementById(`npc-hp-${this.id}`);
     if (stateEl) {
       if (this.dead) {
-        stateEl.textContent = '💀 МЁРТВ';
+        stateEl.textContent = '💤 ОБЕЗДВИЖЕН (Ragdoll)';
+      } else if (this.aiState === 'SURRENDER') {
+        stateEl.textContent = '🏳️ СДАЁТСЯ (Руки вверх!)';
       } else if (this.aiState === 'CRAWL_AGONY') {
-        stateEl.textContent = '🩸 Ползёт (Оторвана нога)';
+        stateEl.textContent = '⚠️ Повреждена нога';
       } else if (this.isRagdoll) {
-        stateEl.textContent = '💫 Сбит с ног';
+        stateEl.textContent = '💫 Физика Ragdoll';
       } else if (this.aiState === 'FEAR_SHOCK') {
-        stateEl.textContent = '😱 ИСПУГАН: «Ты что творишь?!»';
+        stateEl.textContent = '😱 ИСПУГАН';
       } else if (this.aiState === 'RETALIATE') {
         stateEl.textContent = this.hasPistol ? '😡 ОТПОР: Ведёт огонь!' : '😡 ОТПОР: Контратака!';
       } else if (this.aiState === 'INSPECT_PROP') {
         stateEl.textContent = '🤨 Проверяет шум';
       } else if (this.aiState === 'STOP_LOOK') {
-        stateEl.textContent = '👀 Остановился и оглядывается';
+        stateEl.textContent = '👀 Оглядывается';
       } else if (this.aiState === 'WALK_PATROL') {
         stateEl.textContent = '🚶 Идёт по полигону';
       } else {
@@ -1800,7 +1712,7 @@ export class RagdollNPC {
       this.scene.remove(l.mesh);
       this.world.removeBody(l.body);
     }
-    for (const bp of this.bloodParticles) {
+    for (const bp of this.impactParticles) {
       this.scene.remove(bp.mesh);
     }
     if (this.labelEl && this.labelEl.parentNode) {

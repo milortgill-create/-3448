@@ -2,14 +2,13 @@ import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 
 /**
- * FirstPersonPlayer with:
- * - Public methods for Android TouchControls (`performPrimaryAction`, `tryGrabTarget`, `toggleFreezeHeldObject`, `jump`)
- * - Detailed 3D Viewmodel Weapons:
- *   1) RCV2 Reality Crusher (spinning plasma core, copper coils, LCD mode screen, articulated claws, 3 modes)
- *   2) Forged Steel Crowbar (hexagonal crimson shaft, ribbed grip, curved gooseneck, split V-claw & chisel tip)
- *   3) 9mm Tactical/PM Pistol (reciprocating blowback slide, brass chamber port, tritium sights, trigger guard, hammer, barrel bore)
- * - GoreBox 2D Body Trauma Doll state for the Player (10 body parts with HP, bleeding & fractures) + Inventory/Backpack
- * - Solid 3D Collision Resolution against all static & dynamic objects
+ * FirstPersonPlayer (ШАГ 2 – ШАГ 4):
+ * - ШАГ 4: Новая детализированная 3D-модель рук от первого лица (манжеты серой кофты, предплечья,
+ *   беспалые перчатки с защитой костяшек, ремешком на запястье и сгибающимися фалангами пальцев).
+ * - ШАГ 4: Полноценные анимации: idle (дыхание в покое), ходьба/бег, удар рукой (сжатие кулака и выпад),
+ *   стрельба с отдачей затвора и полноценная анимация перезарядки магазина пистолета.
+ * - ШАГ 4: Защита от залипания рук в предметах (динамический отвод rigRoot при сближении с объектами).
+ * - ШАГ 2: Размещение динамических декалей повреждений из пула 40 текстур на полу и стенах/объектах при попадании.
  */
 export class FirstPersonPlayer {
   constructor(camera, scene, world, propsManager, soundManager, onToast, onHitmarker, onPlayerAttackedNPC) {
@@ -27,7 +26,7 @@ export class FirstPersonPlayer {
     this.armor = 0;
     this.adrenalineTimer = 0;
 
-    // Player's 10 anatomical body parts for the 2D GoreBox Trauma Doll
+    // 2D Кукла состояния частей тела
     this.playerLimbs = {
       head: { label: 'Голова', hp: 100, maxHp: 100, bleeding: false, severed: false },
       upperTorso: { label: 'Грудь', hp: 100, maxHp: 100, bleeding: false, severed: false },
@@ -42,19 +41,16 @@ export class FirstPersonPlayer {
       calfR: { label: 'П. Голень', hp: 100, maxHp: 100, bleeding: false, severed: false }
     };
 
-    // Player Backpack Inventory items
     this.backpack = [
       { kind: 'bottle', name: '🍾 Стеклянная бутылка (Зелёная)' },
       { kind: 'crate_std', name: '📦 Деревянный ящик снабжения' },
       { kind: 'barrel_red', name: '🛢️ Бочка с пропаном (Взрывная)' }
     ];
 
-    // Look angles
     this.yaw = 0;
     this.pitch = -0.06;
     this.isLocked = false;
 
-    // Kinematic position & velocity
     this.playerPos = new THREE.Vector3(0, 0, 4.8);
     this.playerRadius = 0.38;
     this.velX = 0;
@@ -68,7 +64,6 @@ export class FirstPersonPlayer {
     this.cameraShake = 0;
     this.bleedTickTimer = 0;
 
-    // Input state
     this.keys = {
       forward: false,
       backward: false,
@@ -82,20 +77,23 @@ export class FirstPersonPlayer {
 
     // Active Tool Slot: 1=Hands, 2=RCV2, 3=Crowbar, 4=Pistol
     this.activeSlot = 1;
-    // RCV2 Modes: 0 = Gravity Grab, 1 = Gore Ripper (Разрыв конечностей), 2 = Telekinesis Blast (Импульс)
     this.rcv2Mode = 0;
     this.pistolAuto = true;
+    this.pistolAmmo = 12;
+    this.pistolMaxAmmo = 12;
+    this.reloadTimer = 0;
+    this.reloadDuration = 1.05;
+    this.punchHandAlt = 0;
     this.swingTimer = 0;
     this.shootCooldown = 0;
     this.recoilPitch = 0;
+    this.wallRetractZ = 0;
 
-    // Held object or NPC limb + hovered target for HUD & 2D Doll
     this.heldTarget = null;
     this.hoveredTarget = null;
     this.lastInspectedNpc = null;
     this.holdDistance = 2.4;
 
-    // Static map colliders
     this.staticBoxes = [
       { x: -4.5, z: -5.5, hx: 1.62, hz: 0.58, minY: 0, maxY: 0.92 },
       { x: 5.2, z: -4.8, hx: 1.32, hz: 0.52, minY: 0, maxY: 0.92 },
@@ -152,6 +150,10 @@ export class FirstPersonPlayer {
     this.cameraShake = Math.min(1.0, this.cameraShake + amount);
   }
 
+  /**
+   * ШАГ 4: Детализированная 3D-модель рук от первого лица (манжета кофты, предплечье,
+   * беспалая перчатка с защитой костяшек, ремешком и сгибающимися фалангами пальцев).
+   */
   _initFirstPersonViewmodel() {
     this.viewmodelScene = new THREE.Scene();
     this.viewmodelCamera = new THREE.PerspectiveCamera(
@@ -172,52 +174,81 @@ export class FirstPersonPlayer {
     this.viewmodelScene.add(this.rigRoot);
 
     const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x989ea5, roughness: 0.76, metalness: 0.04 });
-    const skinMat = new THREE.MeshStandardMaterial({ color: 0xf2d2b6, roughness: 0.58, metalness: 0.03 });
-    const gloveMat = new THREE.MeshStandardMaterial({ color: 0x3f2b21, roughness: 0.68, metalness: 0.06 });
+    const cuffMat = new THREE.MeshStandardMaterial({ color: 0x7e858d, roughness: 0.82, metalness: 0.04 });
+    const skinMat = new THREE.MeshStandardMaterial({ color: 0xf2d2b6, roughness: 0.56, metalness: 0.03 });
+    const gloveMat = new THREE.MeshStandardMaterial({ color: 0x3f2b21, roughness: 0.65, metalness: 0.06 });
+    const knuckleMat = new THREE.MeshStandardMaterial({ color: 0x261912, roughness: 0.45, metalness: 0.18 });
 
-    const buildArm = (isLeft) => {
+    const buildDetailedArm = (isLeft) => {
       const armGroup = new THREE.Group();
       const s = isLeft ? -1 : 1;
 
-      const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.105, 0.105, 0.22), sleeveMat);
-      sleeve.position.set(0, -0.015, 0.16);
-      armGroup.add(sleeve);
+      // 1. Рукав серой кофты + ребристая манжета
+      const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.112, 0.112, 0.22), sleeveMat);
+      sleeve.position.set(0, -0.014, 0.17);
+      const cuff = new THREE.Mesh(new THREE.BoxGeometry(0.116, 0.116, 0.028), cuffMat);
+      cuff.position.set(0, -0.014, 0.055);
+      armGroup.add(sleeve, cuff);
 
-      const forearm = new THREE.Mesh(new THREE.BoxGeometry(0.092, 0.092, 0.28), skinMat);
-      forearm.position.set(0, -0.01, -0.05);
-      armGroup.add(forearm);
+      // 2. Анатомическое предплечье + косточка запястья
+      const forearmUpper = new THREE.Mesh(new THREE.BoxGeometry(0.098, 0.096, 0.16), skinMat);
+      forearmUpper.position.set(0, -0.011, -0.02);
+      const forearmWrist = new THREE.Mesh(new THREE.BoxGeometry(0.090, 0.084, 0.13), skinMat);
+      forearmWrist.position.set(0, -0.009, -0.14);
+      armGroup.add(forearmUpper, forearmWrist);
 
-      const glove = new THREE.Mesh(new THREE.BoxGeometry(0.102, 0.088, 0.115), gloveMat);
-      glove.position.set(0, -0.008, -0.23);
-      armGroup.add(glove);
+      // 3. Беспалая перчатка + ремешок запястья + защитные накладки на костяшках
+      const wristStrap = new THREE.Mesh(new THREE.BoxGeometry(0.096, 0.090, 0.032), knuckleMat);
+      wristStrap.position.set(0, -0.008, -0.195);
+      const gloveBody = new THREE.Mesh(new THREE.BoxGeometry(0.104, 0.088, 0.108), gloveMat);
+      gloveBody.position.set(0, -0.008, -0.25);
 
+      const knuckleGuard = new THREE.Mesh(new THREE.BoxGeometry(0.096, 0.022, 0.036), knuckleMat);
+      knuckleGuard.position.set(0, 0.034, -0.285);
+      armGroup.add(wristStrap, gloveBody, knuckleGuard);
+
+      // 4. Сгибающиеся фаланги 4 пальцев + большой палец
       const fingerGroup = new THREE.Group();
-      fingerGroup.position.set(0, -0.008, -0.30);
+      fingerGroup.position.set(0, -0.004, -0.304);
+      const fingerPivots = [];
+
       for (let f = 0; f < 4; f++) {
-        const fx = (f - 1.5) * 0.023;
-        const finger = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.03, 0.058), skinMat);
-        finger.position.set(fx, -0.006, -0.015);
-        fingerGroup.add(finger);
+        const fx = (f - 1.5) * 0.0235;
+        const fLen = f === 1 || f === 2 ? 0.062 : 0.054;
+        const fPivot = new THREE.Group();
+        fPivot.position.set(fx, 0, 0);
+
+        const phalanx1 = new THREE.Mesh(new THREE.BoxGeometry(0.020, 0.026, fLen * 0.55), skinMat);
+        phalanx1.position.set(0, -0.004, -fLen * 0.27);
+        const phalanx2 = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.023, fLen * 0.48), skinMat);
+        phalanx2.position.set(0, -0.006, -fLen * 0.76);
+
+        fPivot.add(phalanx1, phalanx2);
+        fingerGroup.add(fPivot);
+        fingerPivots.push(fPivot);
       }
 
-      const thumbGlove = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.032, 0.048), gloveMat);
-      thumbGlove.position.set(-s * 0.058, 0.006, 0.032);
-      thumbGlove.rotation.y = s * 0.42;
-      const thumbTip = new THREE.Mesh(new THREE.BoxGeometry(0.026, 0.026, 0.038), skinMat);
-      thumbTip.position.set(-s * 0.068, 0.006, 0.004);
-      thumbTip.rotation.y = s * 0.42;
-      fingerGroup.add(thumbGlove, thumbTip);
+      const thumbPivot = new THREE.Group();
+      thumbPivot.position.set(-s * 0.054, -0.002, 0.042);
+      thumbPivot.rotation.y = s * 0.46;
+
+      const thumbGlove = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.032, 0.046), gloveMat);
+      thumbGlove.position.set(0, 0, -0.015);
+      const thumbTip = new THREE.Mesh(new THREE.BoxGeometry(0.026, 0.026, 0.040), skinMat);
+      thumbTip.position.set(0, -0.002, -0.052);
+      thumbPivot.add(thumbGlove, thumbTip);
+      fingerGroup.add(thumbPivot);
 
       armGroup.add(fingerGroup);
-      armGroup.userData = { fingerGroup };
+      armGroup.userData = { fingerGroup, fingerPivots, thumbPivot };
       return armGroup;
     };
 
-    this.leftArm = buildArm(true);
+    this.leftArm = buildDetailedArm(true);
     this.leftArm.position.set(-0.24, -0.22, -0.32);
     this.leftArm.rotation.set(0.12, -0.18, 0.08);
 
-    this.rightArm = buildArm(false);
+    this.rightArm = buildDetailedArm(false);
     this.rightArm.position.set(0.24, -0.22, -0.32);
     this.rightArm.rotation.set(0.12, 0.18, -0.08);
 
@@ -225,16 +256,18 @@ export class FirstPersonPlayer {
     this._buildViewmodelWeapons();
   }
 
-  /**
-   * Builds detailed, multi-part 3D models for:
-   * 1) RCV2 Reality Crusher (spinning plasma helix, copper coils, LCD screen, articulated 3-prong emitter claws)
-   * 2) Forged Steel Crowbar (hexagonal red shaft, ribbed grip, curved gooseneck, split V-claw & chisel tip)
-   * 3) 9mm Tactical PM Pistol (reciprocating slide, ejection port with brass chamber, tritium sights, trigger & guard, muzzle bore)
-   */
+  _setArmFingerCurl(arm, curlAngle = 0) {
+    if (!arm || !arm.userData || !arm.userData.fingerPivots) return;
+    for (const fp of arm.userData.fingerPivots) {
+      fp.rotation.x = -curlAngle;
+    }
+    if (arm.userData.thumbPivot) {
+      arm.userData.thumbPivot.rotation.x = -curlAngle * 0.6;
+    }
+  }
+
   _buildViewmodelWeapons() {
-    // =========================================================================
-    // 1. NEW RCV2 REALITY CRUSHER MODEL
-    // =========================================================================
+    // 1. RCV2 REALITY CRUSHER
     this.rcv2Mesh = new THREE.Group();
     const gunmetalDark = new THREE.MeshStandardMaterial({ color: 0x161f2c, metalness: 0.85, roughness: 0.26 });
     const gunmetalLight = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.88, roughness: 0.22 });
@@ -242,14 +275,12 @@ export class FirstPersonPlayer {
     const hazardMat = new THREE.MeshStandardMaterial({ color: 0xeab308, roughness: 0.4, metalness: 0.3 });
     this.rcv2CoreMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
 
-    // Rear receiver housing + ergonomic grip
     const rcvReceiver = new THREE.Mesh(new THREE.BoxGeometry(0.095, 0.115, 0.20), gunmetalDark);
     rcvReceiver.position.set(0, 0.055, -0.22);
     const rcvGrip = new THREE.Mesh(new THREE.BoxGeometry(0.048, 0.13, 0.065), gunmetalDark);
     rcvGrip.position.set(0, -0.03, -0.19);
     rcvGrip.rotation.x = 0.22;
 
-    // Top LCD Mode Display Screen
     this.rcv2ScreenMat = new THREE.MeshBasicMaterial({ color: 0x0ea5e9 });
     const screenFrame = new THREE.Mesh(new THREE.BoxGeometry(0.068, 0.045, 0.025), gunmetalLight);
     screenFrame.position.set(0, 0.125, -0.16);
@@ -258,7 +289,6 @@ export class FirstPersonPlayer {
     screenPanel.position.set(0, 0, 0.014);
     screenFrame.add(screenPanel);
 
-    // Side hazard strips & upper/lower containment rails
     const sideStripL = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.022, 0.16), hazardMat);
     sideStripL.position.set(-0.048, 0.055, -0.22);
     const sideStripR = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.022, 0.16), hazardMat);
@@ -269,14 +299,12 @@ export class FirstPersonPlayer {
     const botRail = new THREE.Mesh(new THREE.BoxGeometry(0.042, 0.022, 0.28), gunmetalDark);
     botRail.position.set(0, 0.0, -0.38);
 
-    // 3 Copper Electromagnetic Accelerator Coils around barrel
     for (const cz of [-0.34, -0.41, -0.48]) {
       const coil = new THREE.Mesh(new THREE.TorusGeometry(0.046, 0.009, 8, 18), copperCoilMat);
       coil.position.set(0, 0.058, cz);
       this.rcv2Mesh.add(coil);
     }
 
-    // Spinning Plasma Core Assembly inside the cage
     this.rcv2Rotor = new THREE.Group();
     this.rcv2Rotor.position.set(0, 0.058, -0.40);
     const centralBeam = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.24, 12), this.rcv2CoreMat);
@@ -290,7 +318,6 @@ export class FirstPersonPlayer {
       this.rcv2Rotor.add(rod);
     }
 
-    // Front Muzzle Emitter Ring + 3 Articulated Claws
     const muzzleCollar = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.052, 0.04, 16), gunmetalLight);
     muzzleCollar.rotation.x = Math.PI / 2;
     muzzleCollar.position.set(0, 0.058, -0.53);
@@ -331,9 +358,7 @@ export class FirstPersonPlayer {
     this.rcv2Mesh.visible = false;
     this.rightArm.add(this.rcv2Mesh);
 
-    // =========================================================================
-    // 2. NEW FORGED STEEL CROWBAR MODEL (Монтировка-Гвоздодёр)
-    // =========================================================================
+    // 2. FORGED STEEL CROWBAR
     this.crowbarMesh = new THREE.Group();
     const crowbarRed = new THREE.MeshStandardMaterial({ color: 0xb91c1c, metalness: 0.68, roughness: 0.34 });
     const bareSteel = new THREE.MeshStandardMaterial({ color: 0xdbeafe, metalness: 0.92, roughness: 0.18 });
@@ -343,16 +368,13 @@ export class FirstPersonPlayer {
     cbGroup.position.set(0, 0.10, -0.28);
     cbGroup.rotation.x = -0.32;
 
-    // Hexagonal crimson main shaft
     const hexShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.52, 6), crowbarRed);
     cbGroup.add(hexShaft);
 
-    // Ribbed black grip section where hand holds it
     const gripCyl = new THREE.Mesh(new THREE.CylinderGeometry(0.0175, 0.0175, 0.17, 8), gripRubber);
     gripCyl.position.y = -0.10;
     cbGroup.add(gripCyl);
 
-    // Curved Gooseneck Top Hook (3 angled segments)
     const neck1 = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.075, 6), crowbarRed);
     neck1.position.set(0, 0.285, -0.015);
     neck1.rotation.x = 0.45;
@@ -365,7 +387,6 @@ export class FirstPersonPlayer {
     neck3.position.set(0, 0.32, -0.115);
     neck3.rotation.x = 0.35;
 
-    // Forked V-Notch Nail Puller Prongs (Polished Steel)
     const prongL = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.009, 0.065), bareSteel);
     prongL.position.set(-0.011, 0.295, -0.16);
     prongL.rotation.set(0.52, 0.08, 0);
@@ -374,7 +395,6 @@ export class FirstPersonPlayer {
     prongR.position.set(0.011, 0.295, -0.16);
     prongR.rotation.set(0.52, -0.08, 0);
 
-    // Bottom Chisel Pry-Tip (Polished Steel)
     const bottomChisel = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.085, 0.010), bareSteel);
     bottomChisel.position.set(0, -0.285, -0.01);
     bottomChisel.rotation.x = -0.22;
@@ -384,9 +404,7 @@ export class FirstPersonPlayer {
     this.crowbarMesh.visible = false;
     this.rightArm.add(this.crowbarMesh);
 
-    // =========================================================================
-    // 3. NEW 9MM TACTICAL / PM PISTOL MODEL (With Blowback Slide & Details)
-    // =========================================================================
+    // 3. 9MM TACTICAL PM PISTOL WITH ANIMATED SLIDE & REMOVABLE MAGAZINE FOR RELOAD!
     this.pistolMesh = new THREE.Group();
     const slideSteel = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.88, roughness: 0.24 });
     const frameSteel = new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.75, roughness: 0.36 });
@@ -395,12 +413,10 @@ export class FirstPersonPlayer {
     const boreBlack = new THREE.MeshBasicMaterial({ color: 0x020617 });
     const sightGlow = new THREE.MeshBasicMaterial({ color: 0x4ade80 });
 
-    // Lower Receiver Frame + Under-Barrel Accessory Rail
     const lowerFrame = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.032, 0.23), frameSteel);
     lowerFrame.position.set(0, 0.042, -0.30);
     this.pistolMesh.add(lowerFrame);
 
-    // Trigger Guard + Curved Trigger
     const guardBottom = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.008, 0.075), frameSteel);
     guardBottom.position.set(0, 0.002, -0.265);
     const guardFront = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.032, 0.009), frameSteel);
@@ -410,7 +426,6 @@ export class FirstPersonPlayer {
     trigger.rotation.x = 0.35;
     this.pistolMesh.add(guardBottom, guardFront, trigger);
 
-    // Contoured Grip + Bakelite Side Panels + Magazine Floorplate
     const gripCore = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.125, 0.062), frameSteel);
     gripCore.position.set(0, -0.012, -0.205);
     gripCore.rotation.x = 0.24;
@@ -419,12 +434,22 @@ export class FirstPersonPlayer {
     panelL.position.set(-0.019, 0, 0);
     const panelR = new THREE.Mesh(new THREE.BoxGeometry(0.005, 0.105, 0.052), bakeliteGrip);
     panelR.position.set(0.019, 0, 0);
-    const magPlate = new THREE.Mesh(new THREE.BoxGeometry(0.040, 0.012, 0.068), slideSteel);
-    magPlate.position.set(0, -0.066, 0.002);
-    gripCore.add(panelL, panelR, magPlate);
+    gripCore.add(panelL, panelR);
     this.pistolMesh.add(gripCore);
 
-    // Fixed Rifled Inner Barrel + Dark Muzzle Bore + Brass Chamber Hood
+    // Removable Magazine Group (Slides out & back in during reload animation!)
+    this.pistolMagMesh = new THREE.Group();
+    this.pistolMagMesh.position.set(0, -0.012, -0.205);
+    this.pistolMagMesh.rotation.x = 0.24;
+    const magBody = new THREE.Mesh(new THREE.BoxGeometry(0.030, 0.115, 0.050), slideSteel);
+    const magPlate = new THREE.Mesh(new THREE.BoxGeometry(0.040, 0.012, 0.068), slideSteel);
+    magPlate.position.set(0, -0.066, 0.002);
+    const topBullet = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.036, 8), brassMat);
+    topBullet.rotation.x = Math.PI / 2;
+    topBullet.position.set(0, 0.06, 0);
+    this.pistolMagMesh.add(magBody, magPlate, topBullet);
+    this.pistolMesh.add(this.pistolMagMesh);
+
     const innerBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.011, 0.24, 12), slideSteel);
     innerBarrel.rotation.x = Math.PI / 2;
     innerBarrel.position.set(0, 0.068, -0.325);
@@ -435,27 +460,23 @@ export class FirstPersonPlayer {
     brassChamber.position.set(0.006, 0.072, -0.265);
     this.pistolMesh.add(innerBarrel, muzzleBore, brassChamber);
 
-    // Rear Hammer
     this.pistolHammer = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.026, 0.018), slideSteel);
     this.pistolHammer.position.set(0, 0.065, -0.182);
     this.pistolHammer.rotation.x = -0.35;
     this.pistolMesh.add(this.pistolHammer);
 
-    // Reciprocating Top Slide Group (Moves backward on gunshot recoil!)
     this.pistolSlide = new THREE.Group();
     this.pistolSlide.position.set(0, 0.072, -0.305);
 
     const slideMain = new THREE.Mesh(new THREE.BoxGeometry(0.044, 0.038, 0.26), slideSteel);
     this.pistolSlide.add(slideMain);
 
-    // Rear slide serration grooves
     for (let s = 0; s < 5; s++) {
       const groove = new THREE.Mesh(new THREE.BoxGeometry(0.046, 0.026, 0.004), frameSteel);
       groove.position.set(0, -0.002, 0.075 + s * 0.009);
       this.pistolSlide.add(groove);
     }
 
-    // Front & Rear Iron Sights with Glowing Green Tritium Dots
     const frontSight = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.012, 0.016), slideSteel);
     frontSight.position.set(0, 0.024, -0.115);
     const frontDot = new THREE.Mesh(new THREE.BoxGeometry(0.005, 0.005, 0.002), sightGlow);
@@ -473,7 +494,6 @@ export class FirstPersonPlayer {
     this.pistolSlide.add(frontSight, frontDot, rearSightL, rearSightR, rearDotL, rearDotR);
     this.pistolMesh.add(this.pistolSlide);
 
-    // Muzzle Flash Starburst
     this.muzzleFlash = new THREE.Group();
     this.muzzleFlash.position.set(0, 0.068, -0.48);
     const flashCore = new THREE.Mesh(
@@ -552,7 +572,13 @@ export class FirstPersonPlayer {
         case 'Digit4': this.setSlot(4); break;
         case 'KeyE': this.tryGrabTarget(); break;
         case 'KeyF': this._kickForward(); break;
-        case 'KeyR': this.cycleRcv2Mode(); break;
+        case 'KeyR':
+          if (this.activeSlot === 4) {
+            this.startReload();
+          } else {
+            this.cycleRcv2Mode();
+          }
+          break;
         case 'KeyL': this.toggleFlashlight(); break;
       }
     });
@@ -607,6 +633,7 @@ export class FirstPersonPlayer {
       this.releaseHeldObject(false);
     }
     this.activeSlot = slotNum;
+    this.reloadTimer = 0;
 
     this.rcv2Mesh.visible = slotNum === 2;
     this.crowbarMesh.visible = slotNum === 3;
@@ -617,12 +644,25 @@ export class FirstPersonPlayer {
     });
   }
 
+  /**
+   * ШАГ 4: Полноценная анимация перезарядки пистолета ПМ.
+   */
+  startReload() {
+    if (this.reloadTimer > 0) return;
+    this.reloadTimer = this.reloadDuration;
+    this.pistolAmmo = this.pistolMaxAmmo;
+    this.sound.playReload();
+    if (this.onToast) {
+      this.onToast('🔫 Перезарядка ПМ (12/12)...');
+    }
+  }
+
   cycleRcv2Mode() {
     this.rcv2Mode = (this.rcv2Mode + 1) % 3;
     const colors = [0x38bdf8, 0xef4444, 0xa855f7];
     const names = [
       '⚡ RCV2: Грави-Захват',
-      '🩸 RCV2: Разрыв конечностей (Gore Ripper)',
+      '⚙️ RCV2: Отсоединение сустава',
       '💥 RCV2: Телекинез-Импульс'
     ];
     const col = colors[this.rcv2Mode];
@@ -632,10 +672,6 @@ export class FirstPersonPlayer {
     if (this.onToast) this.onToast(names[this.rcv2Mode]);
     return names[this.rcv2Mode];
   }
-
-  // ===========================================================================
-  // PUBLIC ACTION METHODS FOR ANDROID TOUCH BUTTONS & DESKTOP
-  // ===========================================================================
 
   jump() {
     this._tryJump();
@@ -649,11 +685,7 @@ export class FirstPersonPlayer {
     }
   }
 
-  /**
-   * Called by the 🔥 Attack / Shoot / Launch button on Android and Left-Click on PC.
-   */
   performPrimaryAction() {
-    // If holding an object in Hands or RCV2, pressing 🔥 launches/throws it with high force!
     if (this.heldTarget) {
       this.releaseHeldObject(true);
       return;
@@ -662,13 +694,12 @@ export class FirstPersonPlayer {
     const dmgBoost = this.adrenalineTimer > 0 ? 1.5 : 1.0;
 
     if (this.activeSlot === 1) {
+      this.punchHandAlt = (this.punchHandAlt + 1) % 2;
       this._meleeAttack(20 * dmgBoost, 2.85, 12.5, 'Кулак');
     } else if (this.activeSlot === 2) {
       if (this.rcv2Mode === 0) {
-        // Mode 0: Gravity Grab
         this.tryGrabTarget();
       } else if (this.rcv2Mode === 1) {
-        // Mode 1: Gore Ripper (Instantly rips off targeted NPC limb or shatters prop!)
         const hit = this._raycastCenter(15.0);
         this.swingTimer = 0.26;
         this.sound.playGoreSever();
@@ -676,7 +707,7 @@ export class FirstPersonPlayer {
           const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion).normalize();
           if (hit.limb.severable && !hit.limb.severed) {
             hit.npc.severLimb(hit.limb, dir.clone().multiplyScalar(22));
-            if (this.onToast) this.onToast(`🩸 Оторвана конечность: ${hit.limb.label}!`);
+            if (this.onToast) this.onToast(`⚙️ Сегмент отсоединён: ${hit.limb.label}`);
           } else {
             hit.npc.damageLimb(hit.limb, 45, hit.point, dir.clone().multiplyScalar(25), 'slash', true);
           }
@@ -687,7 +718,6 @@ export class FirstPersonPlayer {
           if (this.onHitmarker) this.onHitmarker();
         }
       } else {
-        // Mode 2: Telekinesis Impulse Wave
         this.swingTimer = 0.25;
         this.sound.playImpact('metal', 0.9);
         const hit = this._raycastCenter(15.0);
@@ -715,9 +745,6 @@ export class FirstPersonPlayer {
     }
   }
 
-  /**
-   * Called by the ✋ Grab button on Android and [E] on PC.
-   */
   tryGrabTarget() {
     if (this.heldTarget) {
       this.releaseHeldObject(false);
@@ -767,9 +794,6 @@ export class FirstPersonPlayer {
     return false;
   }
 
-  /**
-   * Called by the ❄️ Freeze / Mode button on Android and Right-Click on PC.
-   */
   toggleFreezeHeldObject() {
     if (this.heldTarget) {
       const b = this.heldTarget.body;
@@ -790,6 +814,8 @@ export class FirstPersonPlayer {
 
     if (this.activeSlot === 2) {
       this.cycleRcv2Mode();
+    } else if (this.activeSlot === 4) {
+      this.startReload();
     } else {
       this.tryGrabTarget();
     }
@@ -840,6 +866,7 @@ export class FirstPersonPlayer {
       hit.prop.body.wakeUp();
       hit.prop.body.velocity.set(dir.x * 13, 3.2, dir.z * 13);
       this.propsManager.damageProp(hit.prop, 22, hit.point);
+      this.propsManager.addSurfaceDamageDecal(hit.point, hit.normal, 0.22);
       this.sound.playImpact('wood', 0.8);
     } else if (hit && hit.npc && hit.limb) {
       this.lastInspectedNpc = hit.npc;
@@ -857,7 +884,7 @@ export class FirstPersonPlayer {
     this.swingTimer = 0.32;
     this.sound.playFootstep(false);
 
-    const hit = this._raycastCenter(range);
+    const hit = this._raycastCenter(range, true);
     if (!hit) return;
 
     const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion).normalize();
@@ -871,6 +898,7 @@ export class FirstPersonPlayer {
       hit.prop.body.velocity.y += 1.6;
       hit.prop.body.velocity.z += dir.z * (force / Math.max(1, hit.prop.mass * 0.35));
       this.propsManager.damageProp(hit.prop, damage, hit.point);
+      this.propsManager.addSurfaceDamageDecal(hit.point, hit.normal, 0.24);
       this.sound.playImpact(hit.prop.type === 'crate' ? 'wood' : 'metal', 0.85);
       if (this.onHitmarker) this.onHitmarker();
     } else if (hit.npc && hit.limb) {
@@ -880,11 +908,22 @@ export class FirstPersonPlayer {
       if (this.onPlayerAttackedNPC) {
         this.onPlayerAttackedNPC(this.getPosition(), hit.npc);
       }
+    } else if (hit.isWorldSurface) {
+      this.propsManager.addSurfaceDamageDecal(hit.point, hit.normal, 0.24);
+      this.sound.playImpact('concrete', 0.75);
     }
   }
 
   _firePistol() {
-    if (this.shootCooldown > 0) return;
+    if (this.shootCooldown > 0 || this.reloadTimer > 0) return;
+
+    // Auto-reload when magazine is empty!
+    if (this.pistolAmmo <= 0) {
+      this.startReload();
+      return;
+    }
+
+    this.pistolAmmo--;
     this.shootCooldown = 0.16;
     this.swingTimer = 0.18;
     this.recoilPitch = 0.04;
@@ -900,8 +939,11 @@ export class FirstPersonPlayer {
       this.propsManager.onSoundEvent(this.getPosition(), 34, 'gunshot', 'Выстрел из пистолета');
     }
 
-    const hit = this._raycastCenter(55.0);
-    if (!hit) return;
+    const hit = this._raycastCenter(55.0, true);
+    if (!hit) {
+      if (this.pistolAmmo === 0) setTimeout(() => this.startReload(), 180);
+      return;
+    }
 
     const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion).normalize();
     if (hit.prop) {
@@ -915,6 +957,7 @@ export class FirstPersonPlayer {
         new CANNON.Vec3(hit.point.x, hit.point.y, hit.point.z)
       );
       this.propsManager.damageProp(hit.prop, 34, hit.point);
+      this.propsManager.addSurfaceDamageDecal(hit.point, hit.normal, 0.22);
       if (this.onHitmarker) this.onHitmarker();
     } else if (hit.npc && hit.limb) {
       this.lastInspectedNpc = hit.npc;
@@ -923,12 +966,16 @@ export class FirstPersonPlayer {
       if (this.onPlayerAttackedNPC) {
         this.onPlayerAttackedNPC(this.getPosition(), hit.npc);
       }
+    } else if (hit.isWorldSurface) {
+      // ШАГ 2: При попадании пули в пол или стены/столы остаются тёмные декали повреждений из пула 40 текстур!
+      this.propsManager.addSurfaceDamageDecal(hit.point, hit.normal, 0.24);
+      this.sound.playImpact('concrete', 0.55);
+    }
+
+    if (this.pistolAmmo === 0) {
+      setTimeout(() => this.startReload(), 180);
     }
   }
-
-  // ===========================================================================
-  // INVENTORY, MEDICAL & 2D BODY TRAUMA DOLL METHODS
-  // ===========================================================================
 
   takeDamage(amount, knockback = null, targetLimbKey = null) {
     let dmg = amount;
@@ -941,7 +988,6 @@ export class FirstPersonPlayer {
     this.hp = Math.max(0, this.hp - dmg);
     this.addCameraShake(0.28);
 
-    // Flash red damage vignette
     const vig = document.getElementById('damage-vignette');
     if (vig) {
       vig.classList.add('active');
@@ -949,7 +995,6 @@ export class FirstPersonPlayer {
       this._vigTimer = setTimeout(() => vig.classList.remove('active'), 260);
     }
 
-    // Apply localized injury to one of the player's limbs on the 2D GoreBox Body Doll!
     const keys = Object.keys(this.playerLimbs);
     const chosenKey = targetLimbKey || keys[Math.floor(Math.random() * keys.length)];
     const limb = this.playerLimbs[chosenKey];
@@ -972,7 +1017,7 @@ export class FirstPersonPlayer {
       this.velZ = 0;
       this.verticalVel = 0;
       if (this.onToast) {
-        this.onToast('💀 Вы погибли и возродились на платформе!');
+        this.onToast('🔄 Персонаж восстановлен на стартовой точке');
       }
     }
   }
@@ -985,7 +1030,7 @@ export class FirstPersonPlayer {
       this.playerLimbs[k].severed = false;
     }
     if (!silent && this.onToast) {
-      this.onToast('💉 Аптечка использована: 100 HP, все травмы тела вылечены!');
+      this.onToast('💉 Аптечка использована: 100 HP, все травмы вылечены!');
     }
   }
 
@@ -996,7 +1041,7 @@ export class FirstPersonPlayer {
       this.playerLimbs[k].hp = Math.min(this.playerLimbs[k].maxHp, this.playerLimbs[k].hp + 35);
     }
     if (this.onToast) {
-      this.onToast('🩹 Кровотечение остановлено, наложены повязки (+25 HP)');
+      this.onToast('🩹 Наложены повязки (+25 HP)');
     }
   }
 
@@ -1032,7 +1077,6 @@ export class FirstPersonPlayer {
 
     this.backpack.push({ kind, name: `📦 ${prop.name}` });
 
-    // Remove prop from world
     this.scene.remove(prop.mesh);
     this.world.removeBody(prop.body);
     const idx = this.propsManager.props.indexOf(prop);
@@ -1042,7 +1086,7 @@ export class FirstPersonPlayer {
     return true;
   }
 
-  _raycastCenter(maxDist = 6.0) {
+  _raycastCenter(maxDist = 6.0, includeWorldSurfaces = false) {
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
     raycaster.far = maxDist;
@@ -1060,22 +1104,45 @@ export class FirstPersonPlayer {
     }
 
     const intersects = raycaster.intersectObjects(candidates, true);
-    if (intersects.length === 0) return null;
-
-    const first = intersects[0];
-    let obj = first.object;
-    while (obj && (!obj.userData || (!obj.userData.prop && !obj.userData.npc))) {
-      obj = obj.parent;
+    if (intersects.length > 0) {
+      const first = intersects[0];
+      let obj = first.object;
+      while (obj && (!obj.userData || (!obj.userData.prop && !obj.userData.npc))) {
+        obj = obj.parent;
+      }
+      if (obj && obj.userData) {
+        const worldNormal = first.face
+          ? first.face.normal.clone().transformDirection(first.object.matrixWorld).normalize()
+          : new THREE.Vector3(0, 1, 0);
+        return {
+          point: first.point,
+          normal: worldNormal,
+          distance: first.distance,
+          prop: obj.userData.prop || null,
+          npc: obj.userData.npc || null,
+          limb: obj.userData.limb || null
+        };
+      }
     }
-    if (!obj || !obj.userData) return null;
 
-    return {
-      point: first.point,
-      distance: first.distance,
-      prop: obj.userData.prop || null,
-      npc: obj.userData.npc || null,
-      limb: obj.userData.limb || null
-    };
+    // Check floor / static obstacle intersection for surface damage decals
+    if (includeWorldSurfaces) {
+      const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+      const hitPt = new THREE.Vector3();
+      if (raycaster.ray.intersectPlane(floorPlane, hitPt)) {
+        const dist = hitPt.distanceTo(this.camera.position);
+        if (dist <= maxDist && Math.abs(hitPt.x) <= 24.5 && Math.abs(hitPt.z) <= 24.5) {
+          return {
+            point: hitPt,
+            normal: new THREE.Vector3(0, 1, 0),
+            distance: dist,
+            isWorldSurface: true
+          };
+        }
+      }
+    }
+
+    return null;
   }
 
   getPosition() {
@@ -1091,11 +1158,11 @@ export class FirstPersonPlayer {
     this._currentNpcs = allNpcs;
     if (this.shootCooldown > 0) this.shootCooldown -= dt;
     if (this.swingTimer > 0) this.swingTimer = Math.max(0, this.swingTimer - dt);
+    if (this.reloadTimer > 0) this.reloadTimer = Math.max(0, this.reloadTimer - dt);
     if (this.recoilPitch > 0) this.recoilPitch = Math.max(0, this.recoilPitch - dt * 0.22);
     if (this.cameraShake > 0) this.cameraShake = Math.max(0, this.cameraShake - dt * 2.2);
     if (this.adrenalineTimer > 0) this.adrenalineTimer = Math.max(0, this.adrenalineTimer - dt);
 
-    // Slow bleed tick if player has untreated bleeding wounds
     let bleedingCount = 0;
     for (const k of Object.keys(this.playerLimbs)) {
       if (this.playerLimbs[k].bleeding) bleedingCount++;
@@ -1108,7 +1175,7 @@ export class FirstPersonPlayer {
       }
     }
 
-    if (this.mouseDownLeft && this.activeSlot === 4 && this.pistolAuto && this.shootCooldown <= 0) {
+    if (this.mouseDownLeft && this.activeSlot === 4 && this.pistolAuto && this.shootCooldown <= 0 && this.reloadTimer <= 0) {
       this._firePistol();
     }
 
@@ -1143,7 +1210,6 @@ export class FirstPersonPlayer {
       wishDir.normalize();
     }
 
-    // Leg injury penalty (unless adrenaline active)
     const legMinHp = Math.min(
       this.playerLimbs.thighL.hp,
       this.playerLimbs.calfL.hp,
@@ -1392,34 +1458,72 @@ export class FirstPersonPlayer {
     }
   }
 
+  /**
+   * ШАГ 4: Полный контроллер анимаций рук от 1-го лица (idle, ходьба, удар со сжатием кулака,
+   * стрельба, полноценная перезарядка магазина пистолета) + анти-залипание в предметах!
+   */
   _updateViewmodelAnimation(dt) {
     const t = performance.now() * 0.001;
     const speed = Math.hypot(this.velX, this.velZ);
     const walkAmp = Math.min(1, speed / 5.5);
 
-    const swayX = Math.sin(t * 2.1) * 0.008 + Math.cos(this.walkBobTimer * 0.5) * 0.022 * walkAmp;
-    const swayY = Math.cos(t * 1.8) * 0.008 + Math.sin(this.walkBobTimer) * 0.025 * walkAmp;
+    // 1. Защита от залипания рук в предметах (проверка дистанции до ближайшего объекта перед камерой)
+    let targetRetract = 0;
+    if (this.hoveredTarget && this.hoveredTarget.distance < 0.92 && !this.heldTarget) {
+      targetRetract = (0.92 - this.hoveredTarget.distance) * 0.24;
+    }
+    this.wallRetractZ += (targetRetract - this.wallRetractZ) * Math.min(1, dt * 14);
+    this.rigRoot.position.z = this.wallRetractZ;
+
+    // 2. Дыхание в покое (IDLE) + качание при ходьбе (WALK)
+    const idleBreathY = Math.sin(t * 2.2) * 0.007;
+    const idleBreathX = Math.cos(t * 1.1) * 0.005;
+    const walkSwayX = Math.cos(this.walkBobTimer * 0.5) * 0.026 * walkAmp;
+    const walkSwayY = Math.sin(this.walkBobTimer) * 0.028 * walkAmp;
+
+    const swayX = idleBreathX + walkSwayX;
+    const swayY = idleBreathY + walkSwayY;
 
     const swingPhase = this.swingTimer > 0 ? Math.sin((this.swingTimer / 0.32) * Math.PI) : 0;
     const isHoldingHands = Boolean(this.heldTarget && this.heldTarget.mode === 'hands');
 
     if (isHoldingHands) {
-      this.leftArm.position.set(-0.16 + swayX, -0.16 + swayY, -0.38);
-      this.leftArm.rotation.set(0.32, -0.35, 0.15);
-      this.rightArm.position.set(0.16 + swayX, -0.16 + swayY, -0.38);
-      this.rightArm.rotation.set(0.32, 0.35, -0.15);
+      // Руки аккуратно поддерживают предмет с боков, не залипая внутри него
+      this.leftArm.position.set(-0.21 + swayX, -0.18 + swayY, -0.34);
+      this.leftArm.rotation.set(0.28, -0.26, 0.14);
+      this.rightArm.position.set(0.21 + swayX, -0.18 + swayY, -0.34);
+      this.rightArm.rotation.set(0.28, 0.26, -0.14);
+      this._setArmFingerCurl(this.leftArm, 0.55);
+      this._setArmFingerCurl(this.rightArm, 0.55);
     } else if (this.activeSlot === 1) {
-      this.leftArm.position.set(-0.23 + swayX, -0.21 + swayY, -0.31 - swingPhase * 0.08);
-      this.leftArm.rotation.set(0.18, -0.22, 0.08);
-      this.rightArm.position.set(0.23 + swayX - swingPhase * 0.08, -0.20 + swayY + swingPhase * 0.07, -0.31 - swingPhase * 0.24);
-      this.rightArm.rotation.set(0.18 + swingPhase * 0.45, 0.22 + swingPhase * 0.25, -0.08);
+      // Режим Рук: поочерёдные удары левой/правой рукой со сжатием пальцев в кулак
+      const hitLeft = this.punchHandAlt === 1 ? swingPhase : 0;
+      const hitRight = this.punchHandAlt === 0 ? swingPhase : 0;
+
+      this.leftArm.position.set(
+        -0.23 + swayX + hitLeft * 0.09,
+        -0.21 + swayY + hitLeft * 0.07,
+        -0.31 - hitLeft * 0.25
+      );
+      this.leftArm.rotation.set(0.18 + hitLeft * 0.42, -0.22 - hitLeft * 0.25, 0.08);
+
+      this.rightArm.position.set(
+        0.23 + swayX - hitRight * 0.09,
+        -0.20 + swayY + hitRight * 0.07,
+        -0.31 - hitRight * 0.25
+      );
+      this.rightArm.rotation.set(0.18 + hitRight * 0.42, 0.22 + hitRight * 0.25, -0.08);
+
+      this._setArmFingerCurl(this.leftArm, 0.25 + hitLeft * 1.15);
+      this._setArmFingerCurl(this.rightArm, 0.25 + hitRight * 1.15);
     } else if (this.activeSlot === 2) {
       this.leftArm.position.set(-0.18 + swayX, -0.23 + swayY, -0.34);
       this.leftArm.rotation.set(0.18, -0.38, 0.12);
       this.rightArm.position.set(0.20 + swayX, -0.20 + swayY, -0.27 - swingPhase * 0.08);
       this.rightArm.rotation.set(0.06, 0.08, -0.04);
+      this._setArmFingerCurl(this.leftArm, 0.85);
+      this._setArmFingerCurl(this.rightArm, 1.05);
 
-      // Spin RCV2 plasma rotor & flare emitter claws when active!
       if (this.rcv2Rotor) {
         this.rcv2Rotor.rotation.z += dt * (this.heldTarget ? 14.0 : 4.5);
       }
@@ -1432,21 +1536,58 @@ export class FirstPersonPlayer {
       this.rcv2MuzzleOrb.scale.setScalar(this.heldTarget ? 1.45 + Math.sin(t * 18) * 0.25 : 1.0);
     } else if (this.activeSlot === 3) {
       this.leftArm.position.set(-0.26 + swayX, -0.26 + swayY, -0.26);
+      this.leftArm.rotation.set(0.12, -0.18, 0.08);
       this.rightArm.position.set(0.24 + swayX - swingPhase * 0.12, -0.22 + swayY + swingPhase * 0.1, -0.30 - swingPhase * 0.22);
       this.rightArm.rotation.set(0.12 - swingPhase * 0.75, 0.14 + swingPhase * 0.3, -0.08 - swingPhase * 0.35);
+      this._setArmFingerCurl(this.leftArm, 0.35);
+      this._setArmFingerCurl(this.rightArm, 1.25);
     } else if (this.activeSlot === 4) {
-      const recoil = this.shootCooldown > 0 ? (this.shootCooldown / 0.16) : 0;
-      this.leftArm.position.set(0.06 + swayX, -0.23 + swayY, -0.32);
-      this.leftArm.rotation.set(0.22, -0.58, 0.18);
-      this.rightArm.position.set(0.16 + swayX, -0.20 + swayY + recoil * 0.04, -0.29 + recoil * 0.07);
-      this.rightArm.rotation.set(0.08 + recoil * 0.28, 0.06, -0.02);
+      this._setArmFingerCurl(this.leftArm, 0.75);
+      this._setArmFingerCurl(this.rightArm, 1.15);
 
-      // Animate reciprocating blowback slide & hammer on the 9mm Pistol!
-      if (this.pistolSlide) {
-        this.pistolSlide.position.z = -0.305 + recoil * 0.055;
-      }
-      if (this.pistolHammer) {
-        this.pistolHammer.rotation.x = -0.35 - recoil * 0.85;
+      if (this.reloadTimer > 0) {
+        // ШАГ 4: Полноценная 3-фазная анимация перезарядки магазина ПМ!
+        const p = 1.0 - this.reloadTimer / this.reloadDuration; // 0 -> 1
+        // Правая рука поворачивает пистолет рукоятью влево-вверх
+        const tilt = Math.sin(p * Math.PI);
+        this.rightArm.position.set(0.14 + swayX, -0.18 + swayY + tilt * 0.04, -0.28);
+        this.rightArm.rotation.set(0.24 + tilt * 0.25, 0.28 * tilt, 0.38 * tilt);
+
+        if (p < 0.38) {
+          // Фаза 1: Магазин вынимается вниз, левая рука тянется к рукояти
+          const f1 = p / 0.38;
+          if (this.pistolMagMesh) this.pistolMagMesh.position.y = -0.012 - f1 * 0.14;
+          this.leftArm.position.set(-0.08 + f1 * 0.16, -0.26 - f1 * 0.06, -0.30);
+          this.leftArm.rotation.set(0.35, -0.45, 0.22);
+        } else if (p < 0.72) {
+          // Фаза 2: Левая рука вставляет новый магазин снизу вверх до щелчка
+          const f2 = (p - 0.38) / 0.34;
+          if (this.pistolMagMesh) this.pistolMagMesh.position.y = -0.152 + f2 * 0.14;
+          this.leftArm.position.set(0.08, -0.32 + f2 * 0.11, -0.30);
+          this.leftArm.rotation.set(0.42, -0.52, 0.25);
+        } else {
+          // Фаза 3: Левая рука передёргивает затвор сверху
+          const f3 = (p - 0.72) / 0.28;
+          if (this.pistolMagMesh) this.pistolMagMesh.position.y = -0.012;
+          const rackPull = Math.sin(f3 * Math.PI);
+          if (this.pistolSlide) this.pistolSlide.position.z = -0.305 + rackPull * 0.06;
+          this.leftArm.position.set(0.06, -0.13 + (1 - rackPull) * -0.08, -0.33 + rackPull * 0.04);
+          this.leftArm.rotation.set(0.55, -0.62, 0.32);
+        }
+      } else {
+        const recoil = this.shootCooldown > 0 ? (this.shootCooldown / 0.16) : 0;
+        if (this.pistolMagMesh) this.pistolMagMesh.position.y = -0.012;
+        this.leftArm.position.set(0.06 + swayX, -0.23 + swayY, -0.32);
+        this.leftArm.rotation.set(0.22, -0.58, 0.18);
+        this.rightArm.position.set(0.16 + swayX, -0.20 + swayY + recoil * 0.04, -0.29 + recoil * 0.07);
+        this.rightArm.rotation.set(0.08 + recoil * 0.28, 0.06, -0.02);
+
+        if (this.pistolSlide) {
+          this.pistolSlide.position.z = -0.305 + recoil * 0.055;
+        }
+        if (this.pistolHammer) {
+          this.pistolHammer.rotation.x = -0.35 - recoil * 0.85;
+        }
       }
     }
   }
@@ -1482,7 +1623,7 @@ export class FirstPersonPlayer {
       this.lastInspectedNpc = hit.npc;
       promptEl.classList.remove('hidden');
       const limbHp = Math.ceil(hit.limb.hp);
-      const sevStr = hit.limb.severed ? ' [ОТОРВАНА]' : ` [${limbHp} HP]`;
+      const sevStr = hit.limb.severed ? ' [ОТСОЕДИНЕНА]' : ` [${limbHp} HP]`;
       promptEl.textContent = `${hit.npc.name} — ${hit.limb.label}${sevStr}`;
       if (crosshair) crosshair.classList.add('active-target');
     } else {

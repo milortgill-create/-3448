@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 
 /**
- * Procedural 2K (2048x2048) PBR Texture Generator + GoreBox Wound, Bone & Viscera Textures.
+ * Procedural 2K (2048x2048) PBR Texture Generator +
+ * Pool of 40 Unique Surface Damage Decal Textures + Internal Damage Textures.
  */
 export class TextureGenerator {
   constructor(renderer) {
@@ -30,9 +31,7 @@ export class TextureGenerator {
       grd.addColorStop(0, shade);
       grd.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = grd;
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.fillRect(x - r, y - r, r * 2, r * 2);
     }
 
     const tileSize = 256;
@@ -85,22 +84,6 @@ export class TextureGenerator {
       ctx.stroke();
     }
 
-    ctx.strokeStyle = 'rgba(24, 27, 31, 0.5)';
-    for (let c = 0; c < 26; c++) {
-      let cx = Math.random() * size;
-      let cy = Math.random() * size;
-      ctx.lineWidth = 1 + Math.random() * 2.0;
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      const segs = 6 + Math.floor(Math.random() * 10);
-      for (let s = 0; s < segs; s++) {
-        cx += (Math.random() - 0.5) * 58;
-        cy += (Math.random() - 0.5) * 58;
-        ctx.lineTo(cx, cy);
-      }
-      ctx.stroke();
-    }
-
     const map = new THREE.CanvasTexture(diffCanvas);
     map.wrapS = THREE.RepeatWrapping;
     map.wrapT = THREE.RepeatWrapping;
@@ -144,7 +127,7 @@ export class TextureGenerator {
       ctx.fillStyle = `rgb(${139 + toneShift}, ${94 + toneShift}, ${52 + Math.floor(toneShift * 0.6)})`;
       ctx.fillRect(0, y0, size, plankH);
 
-      for (let g = 0; g < 85; g++) {
+      for (let g = 0; g < 70; g++) {
         const gy = y0 + Math.random() * plankH;
         ctx.strokeStyle = Math.random() > 0.5 ? 'rgba(58, 36, 16, 0.22)' : 'rgba(182, 134, 78, 0.16)';
         ctx.lineWidth = 2 + Math.random() * 5;
@@ -161,10 +144,6 @@ export class TextureGenerator {
     }
 
     const border = 140;
-    ctx.fillStyle = '#734b26';
-    ctx.lineWidth = 10;
-    ctx.strokeStyle = '#2b190a';
-
     ctx.save();
     ctx.beginPath();
     ctx.moveTo(border, border);
@@ -186,23 +165,6 @@ export class TextureGenerator {
     ctx.strokeStyle = '#291709';
     ctx.lineWidth = 8;
     ctx.strokeRect(border, border, size - border * 2, size - border * 2);
-    ctx.strokeRect(4, 4, size - 8, size - 8);
-
-    const drawNail = (nx, ny) => {
-      ctx.fillStyle = '#2b3036';
-      ctx.beginPath();
-      ctx.arc(nx, ny, 14, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#6c757d';
-      ctx.beginPath();
-      ctx.arc(nx - 4, ny - 4, 5, 0, Math.PI * 2);
-      ctx.fill();
-    };
-    const m = border * 0.5;
-    drawNail(m, m);
-    drawNail(size - m, m);
-    drawNail(m, size - m);
-    drawNail(size - m, size - m);
 
     ctx.save();
     ctx.translate(size * 0.5, size * 0.28);
@@ -210,9 +172,6 @@ export class TextureGenerator {
     ctx.font = 'bold 74px monospace';
     ctx.textAlign = 'center';
     ctx.fillText('МЕЖДУГОРНЫЙ // СНАБ-04', 0, 0);
-    ctx.font = 'bold 52px monospace';
-    ctx.fillStyle = 'rgba(165, 28, 28, 0.76)';
-    ctx.fillText('ОСТОРОЖНО: ХРУПКОЕ', 0, 78);
     ctx.restore();
 
     const map = new THREE.CanvasTexture(canvas);
@@ -230,7 +189,7 @@ export class TextureGenerator {
   }
 
   /**
-   * Generates a 2K (2048x2048) industrial painted steel drum / explosive barrel texture.
+   * Generates a 2K (2048x2048) industrial painted steel drum texture.
    */
   createMetalBarrel2K(baseColor = '#9e1b1b', stripeColor = '#eab308', label = 'ОГНЕОПАСНО // ГАЗ') {
     const size = 2048;
@@ -251,17 +210,6 @@ export class TextureGenerator {
       ctx.fillRect(0, ry - 20, size, 40);
       ctx.fillStyle = 'rgba(255,255,255,0.22)';
       ctx.fillRect(0, ry - 8, size, 16);
-    }
-
-    for (let i = 0; i < 320; i++) {
-      ctx.strokeStyle = Math.random() > 0.4 ? 'rgba(30, 32, 36, 0.35)' : 'rgba(210, 215, 222, 0.3)';
-      ctx.lineWidth = 2 + Math.random() * 5;
-      const x = Math.random() * size;
-      const y = Math.random() * size;
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(x + (Math.random() - 0.5) * 110, y + (Math.random() - 0.5) * 110);
-      ctx.stroke();
     }
 
     ctx.fillStyle = '#141414';
@@ -296,311 +244,219 @@ export class TextureGenerator {
   }
 
   /**
-   * Generates detailed GoreBox-style Wound Decals, Cross-Section Bone/Viscera, Blood Pool, and Blast Scorch textures!
+   * ШАГ 2: Generates a pool of 40 DISTINCT dark damage decal textures (soot, dirt, craters, cracks, scuffs)
+   * so surface impacts on floors and walls never look repetitive!
+   */
+  createDamageDecalPool40() {
+    const pool = [];
+    const total = 40;
+
+    for (let idx = 0; idx < total; idx++) {
+      const size = 256;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, size, size);
+
+      const cx = 128 + ((idx * 17) % 18) - 9;
+      const cy = 128 + ((idx * 23) % 18) - 9;
+      const archetype = idx % 5; // 5 distinct visual families across 40 unique seeds
+
+      // 1. Soft dark soot / dirt cloud base
+      const outerR = 72 + (idx % 7) * 6;
+      const baseGrad = ctx.createRadialGradient(cx, cy, 8, cx, cy, outerR);
+      const tone = 12 + (idx % 6) * 4;
+      baseGrad.addColorStop(0, `rgba(${tone}, ${tone + 2}, ${tone + 4}, 0.92)`);
+      baseGrad.addColorStop(0.45, `rgba(${tone + 14}, ${tone + 12}, ${tone + 10}, 0.68)`);
+      baseGrad.addColorStop(0.78, `rgba(${tone + 26}, ${tone + 24}, ${tone + 20}, 0.28)`);
+      baseGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = baseGrad;
+
+      ctx.beginPath();
+      const lobes = 12 + (idx % 9);
+      for (let i = 0; i <= lobes; i++) {
+        const a = (i / lobes) * Math.PI * 2;
+        const wave = Math.sin(a * (3 + (idx % 4)) + idx) * 16 + Math.cos(a * (5 + (idx % 3))) * 10;
+        const r = outerR + wave;
+        const x = cx + Math.cos(a) * r;
+        const y = cy + Math.sin(a) * r;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.fill();
+
+      // 2. Archetype-specific details (craters, radial soot rays, cracks, cluster splatters, directional scuffs)
+      if (archetype === 0) {
+        // Deep impact crater with radial micro-cracks
+        ctx.fillStyle = '#090b0e';
+        ctx.beginPath();
+        ctx.arc(cx, cy, 18 + (idx % 8), 0, Math.PI * 2);
+        ctx.fill();
+
+        const crackCount = 5 + (idx % 6);
+        ctx.strokeStyle = 'rgba(12, 14, 18, 0.85)';
+        for (let c = 0; c < crackCount; c++) {
+          const ang = (c / crackCount) * Math.PI * 2 + idx * 0.4;
+          ctx.lineWidth = 1.5 + (c % 2);
+          ctx.beginPath();
+          let px = cx + Math.cos(ang) * 12;
+          let py = cy + Math.sin(ang) * 12;
+          ctx.moveTo(px, py);
+          for (let s = 0; s < 4; s++) {
+            px += Math.cos(ang + (Math.sin(s + idx) * 0.35)) * 18;
+            py += Math.sin(ang + (Math.cos(s + idx) * 0.35)) * 18;
+            ctx.lineTo(px, py);
+          }
+          ctx.stroke();
+        }
+      } else if (archetype === 1) {
+        // Directional high-velocity soot & dirt spray
+        const dirAngle = (idx * 0.78) % (Math.PI * 2);
+        const streakCount = 14 + (idx % 10);
+        for (let s = 0; s < streakCount; s++) {
+          const spread = (s / streakCount - 0.5) * 1.25;
+          const a = dirAngle + spread;
+          const len = 35 + ((idx * 13 + s * 19) % 72);
+          ctx.strokeStyle = s % 2 === 0 ? 'rgba(15, 17, 21, 0.82)' : 'rgba(42, 38, 34, 0.65)';
+          ctx.lineWidth = 2 + (s % 4);
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.lineTo(cx + Math.cos(a) * len, cy + Math.sin(a) * len);
+          ctx.stroke();
+        }
+      } else if (archetype === 2) {
+        // Multi-spot dark grime & debris splatter cluster
+        const blobs = 10 + (idx % 12);
+        for (let b = 0; b < blobs; b++) {
+          const a = (b / blobs) * Math.PI * 2 + idx * 0.3;
+          const d = 14 + ((b * 17 + idx * 7) % 68);
+          const br = 4 + ((b * 5 + idx) % 13);
+          ctx.fillStyle = b % 3 === 0 ? 'rgba(10, 12, 15, 0.88)' : 'rgba(36, 33, 29, 0.75)';
+          ctx.beginPath();
+          ctx.arc(cx + Math.cos(a) * d, cy + Math.sin(a) * d, br, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      } else if (archetype === 3) {
+        // Scorched ring with ash rim & chipped concrete core
+        ctx.strokeStyle = 'rgba(18, 20, 24, 0.78)';
+        ctx.lineWidth = 8 + (idx % 5);
+        ctx.beginPath();
+        ctx.arc(cx, cy, 34 + (idx % 12), 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(55, 52, 48, 0.65)';
+        ctx.beginPath();
+        ctx.arc(cx - 4, cy - 3, 14, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        // Jagged abrasion / shrapnel gouge mark
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate((idx * 0.52) % Math.PI);
+        ctx.fillStyle = 'rgba(14, 16, 20, 0.9)';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 48 + (idx % 18), 14 + (idx % 7), 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // 3. Fine dust speckles around perimeter
+      for (let p = 0; p < 22; p++) {
+        const a = ((p * 29 + idx * 11) % 360) * (Math.PI / 180);
+        const dist = 30 + ((p * 13 + idx * 17) % 75);
+        const pr = 1.5 + (p % 3);
+        ctx.fillStyle = 'rgba(20, 22, 26, 0.72)';
+        ctx.beginPath();
+        ctx.arc(cx + Math.cos(a) * dist, cy + Math.sin(a) * dist, pr, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      pool.push(tex);
+    }
+
+    return pool;
+  }
+
+  /**
+   * Generates localized damage & internal cross-section textures for NPCs and props.
    */
   createGoreAndWoundTextures() {
-    // 1. Bullet Entry / Exit Wound Texture (512x512)
+    const decalPool40 = this.createDamageDecalPool40();
+
+    // 1. Entry Damage Decal Texture (512x512)
     const bulletCanvas = document.createElement('canvas');
     bulletCanvas.width = 512;
     bulletCanvas.height = 512;
     const bCtx = bulletCanvas.getContext('2d');
     bCtx.clearRect(0, 0, 512, 512);
 
-    // Outer bruise & radial blood mist
-    const bruiseGrad = bCtx.createRadialGradient(256, 256, 25, 256, 256, 225);
-    bruiseGrad.addColorStop(0, 'rgba(136, 19, 55, 0.95)');
-    bruiseGrad.addColorStop(0.45, 'rgba(127, 29, 29, 0.85)');
-    bruiseGrad.addColorStop(0.75, 'rgba(76, 5, 25, 0.42)');
+    const bruiseGrad = bCtx.createRadialGradient(256, 256, 20, 256, 256, 210);
+    bruiseGrad.addColorStop(0, 'rgba(30, 20, 24, 0.96)');
+    bruiseGrad.addColorStop(0.5, 'rgba(58, 32, 36, 0.78)');
     bruiseGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
     bCtx.fillStyle = bruiseGrad;
     bCtx.beginPath();
-    bCtx.arc(256, 256, 225, 0, Math.PI * 2);
+    bCtx.arc(256, 256, 210, 0, Math.PI * 2);
     bCtx.fill();
 
-    // Radial blood splatter streaks & droplets
-    for (let i = 0; i < 42; i++) {
-      const ang = (i / 42) * Math.PI * 2 + (Math.random() - 0.5) * 0.2;
-      const len = 85 + Math.random() * 145;
-      bCtx.strokeStyle = i % 3 === 0 ? 'rgba(69, 10, 10, 0.92)' : 'rgba(185, 28, 28, 0.88)';
-      bCtx.lineWidth = 4 + Math.random() * 12;
-      bCtx.beginPath();
-      bCtx.moveTo(256 + Math.cos(ang) * 32, 256 + Math.sin(ang) * 32);
-      bCtx.lineTo(256 + Math.cos(ang) * len, 256 + Math.sin(ang) * len);
-      bCtx.stroke();
-
-      // Droplets around wound
-      const dropDist = len + 12 + Math.random() * 35;
-      if (dropDist < 245) {
-        bCtx.fillStyle = '#7f1d1d';
-        bCtx.beginPath();
-        bCtx.arc(
-          256 + Math.cos(ang) * dropDist,
-          256 + Math.sin(ang) * dropDist,
-          4 + Math.random() * 9,
-          0,
-          Math.PI * 2
-        );
-        bCtx.fill();
-      }
-    }
-
-    // Torn ragged flesh ring (exposed red muscle tissue)
-    bCtx.fillStyle = '#991b1b';
+    bCtx.fillStyle = '#140c0e';
     bCtx.beginPath();
-    for (let i = 0; i <= 32; i++) {
-      const a = (i / 32) * Math.PI * 2;
-      const r = 74 + Math.sin(i * 5.3) * 14 + (Math.random() - 0.5) * 12;
-      const x = 256 + Math.cos(a) * r;
-      const y = 256 + Math.sin(a) * r;
-      if (i === 0) bCtx.moveTo(x, y);
-      else bCtx.lineTo(x, y);
-    }
-    bCtx.closePath();
-    bCtx.fill();
-
-    // Striated muscle fibers inside wound
-    for (let i = 0; i < 24; i++) {
-      bCtx.strokeStyle = i % 2 === 0 ? '#dc2626' : '#450a0a';
-      bCtx.lineWidth = 4;
-      bCtx.beginPath();
-      bCtx.moveTo(195 + Math.random() * 120, 195 + Math.random() * 120);
-      bCtx.lineTo(195 + Math.random() * 120, 195 + Math.random() * 120);
-      bCtx.stroke();
-    }
-
-    // Deep dark entry cavity with a glimpse of white bone inside
-    const cavGrad = bCtx.createRadialGradient(256, 256, 6, 256, 256, 52);
-    cavGrad.addColorStop(0, '#180204');
-    cavGrad.addColorStop(0.65, '#3b070b');
-    cavGrad.addColorStop(1, '#7f1d1d');
-    bCtx.fillStyle = cavGrad;
-    bCtx.beginPath();
-    bCtx.arc(256, 256, 52, 0, Math.PI * 2);
-    bCtx.fill();
-
-    // Subtle bone fragment visible inside deep wound
-    bCtx.fillStyle = 'rgba(241, 245, 249, 0.82)';
-    bCtx.beginPath();
-    bCtx.ellipse(246, 252, 16, 9, 0.4, 0, Math.PI * 2);
+    bCtx.arc(256, 256, 54, 0, Math.PI * 2);
     bCtx.fill();
 
     const bulletWoundTex = new THREE.CanvasTexture(bulletCanvas);
     bulletWoundTex.colorSpace = THREE.SRGBColorSpace;
 
-    // 2. Slash / Blunt Laceration Wound Texture (512x512)
+    // 2. Blunt / Slash Damage Decal Texture (512x512)
     const slashCanvas = document.createElement('canvas');
     slashCanvas.width = 512;
     slashCanvas.height = 512;
     const sCtx = slashCanvas.getContext('2d');
     sCtx.clearRect(0, 0, 512, 512);
 
-    // Bruised perimeter around gash
-    const sGrad = sCtx.createRadialGradient(256, 256, 30, 256, 256, 230);
-    sGrad.addColorStop(0, 'rgba(127, 29, 29, 0.92)');
-    sGrad.addColorStop(0.6, 'rgba(88, 28, 45, 0.48)');
-    sGrad.addColorStop(1, 'rgba(0,0,0,0)');
-    sCtx.fillStyle = sGrad;
-    sCtx.fillRect(0, 0, 512, 512);
-
-    // Jagged diagonal gash exposing muscle & bone
     sCtx.save();
     sCtx.translate(256, 256);
     sCtx.rotate(-0.38);
-
-    // Torn skin edge
-    sCtx.fillStyle = '#b91c1c';
+    sCtx.fillStyle = 'rgba(42, 24, 28, 0.9)';
     sCtx.beginPath();
-    sCtx.ellipse(0, 0, 195, 58, 0, 0, Math.PI * 2);
+    sCtx.ellipse(0, 0, 185, 48, 0, 0, Math.PI * 2);
     sCtx.fill();
-
-    // Inner muscle tissue
-    sCtx.fillStyle = '#7f1d1d';
+    sCtx.fillStyle = '#180d10';
     sCtx.beginPath();
-    sCtx.ellipse(0, 0, 172, 38, 0, 0, Math.PI * 2);
-    sCtx.fill();
-
-    // White bone / tendon lines across the gash
-    sCtx.strokeStyle = '#e2e8f0';
-    sCtx.lineWidth = 7;
-    for (let k = -2; k <= 2; k++) {
-      sCtx.beginPath();
-      sCtx.moveTo(k * 42 - 12, -24);
-      sCtx.lineTo(k * 42 + 10, 24);
-      sCtx.stroke();
-    }
-
-    // Deep dark slit center
-    sCtx.fillStyle = '#1f0406';
-    sCtx.beginPath();
-    sCtx.ellipse(0, 0, 150, 16, 0, 0, Math.PI * 2);
+    sCtx.ellipse(0, 0, 145, 18, 0, 0, Math.PI * 2);
     sCtx.fill();
     sCtx.restore();
-
-    // Dripping blood trails downwards
-    for (let d = 0; d < 12; d++) {
-      const dx = 110 + d * 26 + (Math.random() - 0.5) * 14;
-      const dy = 240 + (Math.random() - 0.5) * 30;
-      const dLen = 70 + Math.random() * 145;
-      sCtx.strokeStyle = 'rgba(136, 19, 25, 0.9)';
-      sCtx.lineWidth = 5 + Math.random() * 7;
-      sCtx.lineCap = 'round';
-      sCtx.beginPath();
-      sCtx.moveTo(dx, dy);
-      sCtx.lineTo(dx + (Math.random() - 0.5) * 10, Math.min(504, dy + dLen));
-      sCtx.stroke();
-    }
 
     const slashWoundTex = new THREE.CanvasTexture(slashCanvas);
     slashWoundTex.colorSpace = THREE.SRGBColorSpace;
 
-    // 3. Cross-Section Severed Limb Stump (Skin + Fat + Muscle + Viscera + Bone & Marrow) (512x512)
-    const goreCanvas = document.createElement('canvas');
-    goreCanvas.width = 512;
-    goreCanvas.height = 512;
-    const gCtx = goreCanvas.getContext('2d');
+    // 3. Internal Joint Cross-Section Texture (Внутренние текстуры)
+    const internalCanvas = document.createElement('canvas');
+    internalCanvas.width = 512;
+    internalCanvas.height = 512;
+    const gCtx = internalCanvas.getContext('2d');
 
-    // Deep crimson base
-    gCtx.fillStyle = '#5c0c12';
+    gCtx.fillStyle = '#3b1518';
     gCtx.fillRect(0, 0, 512, 512);
-
-    // Outer subcutaneous rim
-    gCtx.strokeStyle = '#dca884';
-    gCtx.lineWidth = 22;
+    gCtx.fillStyle = '#e2e8f0';
     gCtx.beginPath();
-    gCtx.arc(256, 256, 236, 0, Math.PI * 2);
-    gCtx.stroke();
-
-    // Muscle bundles (segmented anatomical cross-section)
-    const bundles = 9;
-    for (let i = 0; i < bundles; i++) {
-      const a = (i / bundles) * Math.PI * 2;
-      const bx = 256 + Math.cos(a) * 145;
-      const by = 256 + Math.sin(a) * 145;
-      const grd = gCtx.createRadialGradient(bx, by, 10, bx, by, 72);
-      grd.addColorStop(0, '#b91c1c');
-      grd.addColorStop(0.7, '#7f1d1d');
-      grd.addColorStop(1, '#3b070b');
-      gCtx.fillStyle = grd;
-      gCtx.beginPath();
-      gCtx.arc(bx, by, 68, 0, Math.PI * 2);
-      gCtx.fill();
-
-      // White fascia connective tissue lines
-      gCtx.strokeStyle = 'rgba(254, 202, 202, 0.38)';
-      gCtx.lineWidth = 4;
-      gCtx.stroke();
-    }
-
-    // Dark venous vessels & viscera pockets
-    for (let v = 0; v < 18; v++) {
-      const va = Math.random() * Math.PI * 2;
-      const vr = 75 + Math.random() * 120;
-      gCtx.fillStyle = v % 2 === 0 ? '#2a0408' : '#991b1b';
-      gCtx.beginPath();
-      gCtx.arc(256 + Math.cos(va) * vr, 256 + Math.sin(va) * vr, 10 + Math.random() * 18, 0, Math.PI * 2);
-      gCtx.fill();
-    }
-
-    // Central Ivory Bone Cross-Section (Костная ткань)
-    gCtx.fillStyle = '#f1f5f9';
-    gCtx.beginPath();
-    gCtx.arc(256, 256, 68, 0, Math.PI * 2);
+    gCtx.arc(256, 256, 66, 0, Math.PI * 2);
     gCtx.fill();
 
-    gCtx.strokeStyle = '#cbd5e1';
-    gCtx.lineWidth = 8;
-    gCtx.stroke();
-
-    // Spongy red bone marrow inside bone core
-    const marrowGrad = gCtx.createRadialGradient(256, 256, 4, 256, 256, 36);
-    marrowGrad.addColorStop(0, '#4c0519');
-    marrowGrad.addColorStop(0.7, '#9f1239');
-    marrowGrad.addColorStop(1, '#cbd5e1');
-    gCtx.fillStyle = marrowGrad;
-    gCtx.beginPath();
-    gCtx.arc(256, 256, 36, 0, Math.PI * 2);
-    gCtx.fill();
-
-    const goreCrossSectionTex = new THREE.CanvasTexture(goreCanvas);
+    const goreCrossSectionTex = new THREE.CanvasTexture(internalCanvas);
     goreCrossSectionTex.colorSpace = THREE.SRGBColorSpace;
 
-    // 4. Organic Blood Pool Floor Decal Texture (512x512)
-    const poolCanvas = document.createElement('canvas');
-    poolCanvas.width = 512;
-    poolCanvas.height = 512;
-    const pCtx = poolCanvas.getContext('2d');
-    pCtx.clearRect(0, 0, 512, 512);
-
-    const pGrad = pCtx.createRadialGradient(256, 256, 30, 256, 256, 210);
-    pGrad.addColorStop(0, 'rgba(69, 10, 10, 0.96)');
-    pGrad.addColorStop(0.55, 'rgba(127, 29, 29, 0.9)');
-    pGrad.addColorStop(0.85, 'rgba(153, 27, 27, 0.72)');
-    pGrad.addColorStop(1, 'rgba(127, 29, 29, 0)');
-    pCtx.fillStyle = pGrad;
-    pCtx.beginPath();
-    for (let i = 0; i <= 40; i++) {
-      const a = (i / 40) * Math.PI * 2;
-      const r = 165 + Math.sin(i * 3.7) * 32 + Math.cos(i * 6.1) * 18;
-      const x = 256 + Math.cos(a) * r;
-      const y = 256 + Math.sin(a) * r;
-      if (i === 0) pCtx.moveTo(x, y);
-      else pCtx.lineTo(x, y);
-    }
-    pCtx.closePath();
-    pCtx.fill();
-
-    // Satellite blood drops around pool
-    for (let d = 0; d < 28; d++) {
-      const a = Math.random() * Math.PI * 2;
-      const dist = 165 + Math.random() * 75;
-      pCtx.fillStyle = 'rgba(127, 29, 29, 0.88)';
-      pCtx.beginPath();
-      pCtx.arc(256 + Math.cos(a) * dist, 256 + Math.sin(a) * dist, 5 + Math.random() * 14, 0, Math.PI * 2);
-      pCtx.fill();
-    }
-
-    const bloodPoolTex = new THREE.CanvasTexture(poolCanvas);
-    bloodPoolTex.colorSpace = THREE.SRGBColorSpace;
-
-    // 5. Realistic Explosion Blast Crater / Scorch Decal Texture (512x512)
-    const scorchCanvas = document.createElement('canvas');
-    scorchCanvas.width = 512;
-    scorchCanvas.height = 512;
-    const scCtx = scorchCanvas.getContext('2d');
-    scCtx.clearRect(0, 0, 512, 512);
-
-    const scGrad = scCtx.createRadialGradient(256, 256, 20, 256, 256, 245);
-    scGrad.addColorStop(0, 'rgba(5, 7, 11, 0.96)');
-    scGrad.addColorStop(0.4, 'rgba(17, 24, 39, 0.85)');
-    scGrad.addColorStop(0.72, 'rgba(45, 38, 32, 0.45)');
-    scGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-    scCtx.fillStyle = scGrad;
-    scCtx.beginPath();
-    scCtx.arc(256, 256, 245, 0, Math.PI * 2);
-    scCtx.fill();
-
-    // Radial blast soot streaks & concrete cracks
-    for (let i = 0; i < 64; i++) {
-      const a = (i / 64) * Math.PI * 2 + (Math.random() - 0.5) * 0.1;
-      const r1 = 35 + Math.random() * 30;
-      const r2 = 140 + Math.random() * 105;
-      scCtx.strokeStyle = i % 5 === 0 ? 'rgba(180, 83, 9, 0.35)' : 'rgba(10, 12, 16, 0.78)';
-      scCtx.lineWidth = 3 + Math.random() * 9;
-      scCtx.beginPath();
-      scCtx.moveTo(256 + Math.cos(a) * r1, 256 + Math.sin(a) * r1);
-      scCtx.lineTo(256 + Math.cos(a) * r2, 256 + Math.sin(a) * r2);
-      scCtx.stroke();
-    }
-
-    const scorchTex = new THREE.CanvasTexture(scorchCanvas);
-    scorchTex.colorSpace = THREE.SRGBColorSpace;
-
     return {
+      decalPool40,
       bulletWound: bulletWoundTex,
       slashWound: slashWoundTex,
       goreCrossSection: goreCrossSectionTex,
-      bloodPool: bloodPoolTex,
-      scorch: scorchTex
+      bloodPool: decalPool40[0],
+      scorch: decalPool40[3]
     };
   }
 }

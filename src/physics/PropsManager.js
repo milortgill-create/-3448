@@ -1022,41 +1022,34 @@ export class PropsManager {
   }
 
   /**
-   * Adds a persistent GoreBox-style decal (textured blood puddle, liquid spill, or blast crater scorch) on the concrete floor.
+   * ШАГ 2: Выбирает следующую текстуру из пула 40 уникальных декалей повреждений (без повторов подряд).
    */
-  addFloorDecal(x, z, radius = 0.45, kind = 'blood') {
+  _pickNextDamageDecalTexture() {
+    const pool = this.textures.gore && this.textures.gore.decalPool40;
+    if (!pool || pool.length === 0) return null;
+    if (this._decalCursor === undefined) {
+      this._decalCursor = Math.floor(Math.random() * pool.length);
+    }
+    this._decalCursor = (this._decalCursor + 1 + Math.floor(Math.random() * 5)) % pool.length;
+    return pool[this._decalCursor];
+  }
+
+  /**
+   * ШАГ 2: Динамические декали повреждений на полу из пула 40 РАЗНЫХ текстур (эффект копоти/грязи/повреждений, без красной текстуры).
+   */
+  addFloorDecal(x, z, radius = 0.45, kind = 'damage') {
     if (Math.abs(x) > 24.5 || Math.abs(z) > 24.5) return;
 
-    let mat;
-    if (kind === 'blood' && this.textures.gore && this.textures.gore.bloodPool) {
-      mat = new THREE.MeshBasicMaterial({
-        map: this.textures.gore.bloodPool,
-        transparent: true,
-        opacity: 0.92,
-        depthWrite: false,
-        polygonOffset: true,
-        polygonOffsetFactor: -2
-      });
-    } else if (kind === 'scorch' && this.textures.gore && this.textures.gore.scorch) {
-      mat = new THREE.MeshBasicMaterial({
-        map: this.textures.gore.scorch,
-        transparent: true,
-        opacity: 0.92,
-        depthWrite: false,
-        polygonOffset: true,
-        polygonOffsetFactor: -2
-      });
-    } else {
-      const colors = { blood: 0x7f1d1d, liquid: 0x0f766e, scorch: 0x111827 };
-      mat = new THREE.MeshBasicMaterial({
-        color: colors[kind] || 0x7f1d1d,
-        transparent: true,
-        opacity: kind === 'blood' ? 0.85 : 0.52,
-        depthWrite: false,
-        polygonOffset: true,
-        polygonOffsetFactor: -2
-      });
-    }
+    const tex = this._pickNextDamageDecalTexture();
+    const mat = new THREE.MeshBasicMaterial({
+      map: tex || null,
+      color: kind === 'liquid' ? 0x1e293b : 0xffffff,
+      transparent: true,
+      opacity: kind === 'scorch' ? 0.94 : 0.86,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2
+    });
 
     const geo = new THREE.PlaneGeometry(radius * 2, radius * 2);
     const mesh = new THREE.Mesh(geo, mat);
@@ -1066,7 +1059,44 @@ export class PropsManager {
     this.scene.add(mesh);
 
     this.decals.push(mesh);
-    if (this.decals.length > 95) {
+    if (this.decals.length > 110) {
+      const old = this.decals.shift();
+      this.scene.remove(old);
+    }
+  }
+
+  /**
+   * ШАГ 2: Размещает динамическую декаль повреждения (из пула 40 текстур) на любой поверхности — полу, стене или объекте.
+   */
+  addSurfaceDamageDecal(worldPoint, worldNormal = null, radius = 0.24) {
+    if (!worldPoint) return;
+    if (!worldNormal || worldNormal.y > 0.78 || worldPoint.y < 0.08) {
+      this.addFloorDecal(worldPoint.x, worldPoint.z, radius, 'damage');
+      return;
+    }
+
+    const tex = this._pickNextDamageDecalTexture();
+    const mat = new THREE.MeshBasicMaterial({
+      map: tex || null,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      side: THREE.DoubleSide
+    });
+
+    const geo = new THREE.PlaneGeometry(radius * 2, radius * 2);
+    const mesh = new THREE.Mesh(geo, mat);
+    const norm = worldNormal.clone().normalize();
+    mesh.position.copy(worldPoint).addScaledVector(norm, 0.008);
+    const target = mesh.position.clone().add(norm);
+    mesh.lookAt(target);
+    mesh.rotateZ(Math.random() * Math.PI * 2);
+    this.scene.add(mesh);
+
+    this.decals.push(mesh);
+    if (this.decals.length > 110) {
       const old = this.decals.shift();
       this.scene.remove(old);
     }

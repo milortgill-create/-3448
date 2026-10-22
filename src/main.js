@@ -87,7 +87,7 @@ class MezhdugornySandboxGame {
       this.textures.concrete = texGen.createConcrete2K();
 
       setTimeout(() => {
-        this._setLoadingProgress(68, 'Генерация 2K текстур ящиков, бочек и текстур ран GoreBox...');
+        this._setLoadingProgress(68, 'Генерация 2K текстур и пула из 40 декалей повреждений...');
         this.textures.wood = texGen.createWoodCrate2K();
         this.textures.barrelRed = texGen.createMetalBarrel2K('#b91c1c', '#facc15', 'ОГНЕОПАСНО // ПРОПАН');
         this.textures.barrelBlue = texGen.createMetalBarrel2K('#1d4ed8', '#e2e8f0', 'ТЕХ. ВОДА // МЕЖДУГОРНЫЙ');
@@ -95,7 +95,7 @@ class MezhdugornySandboxGame {
         this.textures.gore = texGen.createGoreAndWoundTextures();
 
         setTimeout(() => {
-          this._setLoadingProgress(92, 'Сборка Goredoll НПС, 2D куклы травм и оружия...');
+          this._setLoadingProgress(92, 'Сборка физики Ragdoll НПС, 3D-рук и звуков...');
           this._buildGameSystems();
           this._setLoadingProgress(100, 'Готово!');
 
@@ -366,6 +366,12 @@ class MezhdugornySandboxGame {
       this.showToast(this.player.pistolAuto ? '🔫 ПМ: Авто-огонь' : '🔫 ПМ: Одиночный огонь');
     });
 
+    this._bindTap(document.getElementById('btn-pistol-reload'), () => {
+      this.player.setSlot(4);
+      this.player.startReload();
+      if (invEl) invEl.classList.add('hidden');
+    });
+
     this._bindTap(document.getElementById('btn-store-held'), () => {
       if (this.player.storeHeldInBackpack()) {
         this._renderBackpackList();
@@ -592,19 +598,22 @@ class MezhdugornySandboxGame {
     }
 
     if (targetNpc && targetNpc.dead) {
-      statusEl.textContent = '💀 МЁРТВ';
+      statusEl.textContent = '💤 ОБЕЗДВИЖЕН';
       statusEl.style.color = '#ef4444';
+    } else if (targetNpc && targetNpc.surrendered) {
+      statusEl.textContent = '🙌 СДАЁТСЯ';
+      statusEl.style.color = '#fbbf24';
     } else if (severedCount > 0) {
-      statusEl.textContent = `🩸 Оторвано: ${severedCount}`;
+      statusEl.textContent = `⚙️ Отсоединено: ${severedCount}`;
       statusEl.style.color = '#f87171';
     } else if (criticalCount > 0) {
-      statusEl.textContent = `⚠️ Перелом (${criticalCount})`;
+      statusEl.textContent = `⚠️ Критич. урон (${criticalCount})`;
       statusEl.style.color = '#ef4444';
     } else if (bleedingCount > 0) {
-      statusEl.textContent = `🩸 Кровотечение`;
+      statusEl.textContent = `⚠️ Тяж. повреждение`;
       statusEl.style.color = '#fb923c';
     } else if (bruisedCount > 0) {
-      statusEl.textContent = `Ушибы / Ранения`;
+      statusEl.textContent = `Ушибы / Повреждения`;
       statusEl.style.color = '#facc15';
     } else {
       statusEl.textContent = `Все конечности целы`;
@@ -670,9 +679,9 @@ class MezhdugornySandboxGame {
       const st = this._getLimbTraumaClass(limb);
       const pct = Math.max(0, Math.round((limb.hp / limb.maxHp) * 100));
       let statusLabel = `${pct}%`;
-      if (st === 'severed') statusLabel = 'ОТОРВАНА 🩸';
-      else if (st === 'critical') statusLabel = `${pct}% (Перелом)`;
-      else if (st === 'bleeding') statusLabel = `${pct}% (Кровь)`;
+      if (st === 'severed') statusLabel = 'ОТСОЕДИНЕНА ⚙️';
+      else if (st === 'critical') statusLabel = `${pct}% (Критич.)`;
+      else if (st === 'bleeding') statusLabel = `${pct}% (Поврежд.)`;
 
       const row = document.createElement('div');
       row.className = `limb-stat-row ${st}`;
@@ -769,7 +778,7 @@ class MezhdugornySandboxGame {
     this.player.verticalVel = 0;
     this.player.yaw = 0;
     this.player.pitch = -0.06;
-    this.showToast('🔄 Полигон перезапущен');
+    this.showToast('🔄 Полигон перезапущен: внешность НПС обновлена случайно');
   }
 
   _updateHUD(now) {
@@ -787,6 +796,12 @@ class MezhdugornySandboxGame {
 
       const armVal = document.getElementById('player-armor-val');
       if (armVal) armVal.textContent = String(Math.round(this.player.armor));
+
+      const pistolLabel = document.getElementById('slot-pistol-label');
+      if (pistolLabel) {
+        pistolLabel.textContent =
+          this.player.reloadTimer > 0 ? 'ПМ ⏳' : `ПМ ${this.player.pistolAmmo}`;
+      }
 
       this._updateBodyDollHUD();
     }

@@ -90,7 +90,7 @@
       </div>
       <div class="hotbar-slot" data-slot="4">
         <span class="slot-icon">🔫</span>
-        <span class="slot-name">ПМ</span>
+        <span class="slot-name" id="slot-pistol-label">ПМ 12</span>
       </div>
     </div>
 
@@ -186,9 +186,9 @@
           </div>
           <div class="inv-doll-legend">
             <span class="leg-dot healthy"></span> Цела
-            <span class="leg-dot bruised"></span> Ранена
-            <span class="leg-dot critical"></span> Перелом/Кровь
-            <span class="leg-dot severed"></span> Оторвана
+            <span class="leg-dot bruised"></span> Повреждена
+            <span class="leg-dot critical"></span> Критич. урон
+            <span class="leg-dot severed"></span> Отсоединена
           </div>
         </div>
 
@@ -198,11 +198,12 @@
           <button class="inv-equip-btn" data-equip="1" type="button">✊ Руки (Бой / Захват предметов)</button>
           <button class="inv-equip-btn" data-equip="2" type="button">⚡ RCV2 Reality Crusher (Гравипушка)</button>
           <button class="inv-equip-btn" data-equip="3" type="button">🔧 Стальной Лом-Гвоздодёр (Острый)</button>
-          <button class="inv-equip-btn" data-equip="4" type="button">🔫 Пистолет ПМ 9×18мм (Новые детали)</button>
+          <button class="inv-equip-btn" data-equip="4" type="button">🔫 Пистолет ПМ 9×18мм (12 патр.)</button>
 
           <h3 style="margin-top:10px;">⚙️ Режимы оружия</h3>
           <button id="btn-rcv2-mode" class="spawn-action-btn" type="button">⚡ Режим RCV2: Грави-Захват</button>
           <button id="btn-pistol-mode" class="spawn-action-btn" type="button">🔫 Режим ПМ: Полуавтомат / Авто</button>
+          <button id="btn-pistol-reload" class="spawn-action-btn" type="button">🔄 Перезарядить ПМ (12/12)</button>
           <button id="btn-store-held" class="spawn-action-btn" type="button">📥 Убрать предмет из рук в рюкзак</button>
         </div>
 
@@ -210,7 +211,7 @@
         <div class="spawn-col">
           <h3>💉 Медицина и Снаряжение</h3>
           <button id="inv-use-medkit" class="spawn-action-btn" type="button">💉 Использовать Аптечку (+100 HP и лечение куклы)</button>
-          <button id="inv-use-bandage" class="spawn-action-btn" type="button">🩹 Перевязать раны (Остановить кровь)</button>
+          <button id="inv-use-bandage" class="spawn-action-btn" type="button">🩹 Наложить повязку (+25 HP и стабилизация)</button>
           <button id="inv-use-armor" class="spawn-action-btn" type="button">🛡️ Надеть Бронежилет (+100 Брони)</button>
           <button id="inv-use-adrenaline" class="spawn-action-btn" type="button">💊 Вколоть Адреналин (Ускорение + Сила)</button>
 

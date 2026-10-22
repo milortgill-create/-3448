@@ -353,8 +353,18 @@ export class TouchControls {
     }
 
     if (this.btnFreeze) {
-      const showFreeze = isHolding || this.player.activeSlot === 2;
+      const showFreeze = isHolding || this.player.activeSlot === 2 || this.player.activeSlot === 4;
       this.btnFreeze.classList.toggle('hidden', !showFreeze);
+      const iconSpan = this.btnFreeze.querySelector('.abtn-icon');
+      if (iconSpan) {
+        if (isHolding) {
+          iconSpan.textContent = '❄️';
+        } else if (this.player.activeSlot === 4) {
+          iconSpan.textContent = '🔄';
+        } else {
+          iconSpan.textContent = '⚙️';
+        }
+      }
     }
   }
 }
